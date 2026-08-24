@@ -7,3 +7,5 @@ Dieses Repository zeigt drei ausgewählte n8n-Workflows eines modularen Bewerbun
 - **[M7 – Versand](workflows/M7-Versand-Gmail-GitHub.json):** Verarbeitet ausschließlich freigegebene Bewerbungen, prüft Versandvoraussetzungen und dokumentiert Sendeversuche sowie Ergebnisse als Schutz vor unkontrolliertem oder doppeltem Versand.
 
 Für diese öffentliche Version wurden Credentials, interne IDs, E-Mail-Adressen, lokale Pfade und weitere sensible oder produktive Angaben entfernt beziehungsweise anonymisiert. Alle Workflows sind deaktiviert und benötigen vor einer eigenen Nutzung eine individuelle Konfiguration.
+
+Live-Demo & Portfolio: [https://jerome-wolfarth-portfolio.vercel.app](https://jerome-wolfarth-portfolio.vercel.app)
