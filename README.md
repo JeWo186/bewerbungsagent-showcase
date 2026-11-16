@@ -12,7 +12,7 @@ Dieses Repository zeigt drei bereinigte n8n-Workflows aus meinem größten Praxi
 
 - **Der Mensch entscheidet:** Nichts geht ohne manuelle Freigabe hinaus.
 - **KI nur, wo sie hilft:** Eindeutige Aufgaben wie Dubletten, Statuswechsel und Versandprüfungen laufen regelbasiert.
-- **Kosten im Blick:** Bei der Überarbeitung im November 2026 habe ich die Modelle neu gewählt und rund die Hälfte der Abläufe stillgelegt – mit rund 90 % niedrigeren KI-Kosten.
+- **Kosten im Blick:** Bei der Überarbeitung im November 2026 habe ich die Modelle neu gewählt und rund die Hälfte der Abläufe stillgelegt. Der Modellwechsel senkt die Kosten pro KI-Aufruf um rund 85–90 %.
 
 ## Hinweise
 
