@@ -1,11 +1,21 @@
-# Bewerbungsagent – n8n-Workflow-Showcase
+# Recherche- und Outreach-Pipeline – n8n-Workflow-Beispiele
 
-Dieses Repository zeigt drei ausgewählte n8n-Workflows eines modularen Bewerbungsagenten. Im Mittelpunkt stehen die bereinigten Workflow-Definitionen im Ordner [`workflows`](workflows/).
+Dieses Repository zeigt drei bereinigte n8n-Workflows aus meinem größten Praxisprojekt: einer Pipeline, die passende Unternehmen findet, recherchiert, einordnet und eine persönliche Ansprache vorbereitet. Gebaut habe ich sie für meinen eigenen Berufseinstieg – die Logik entspricht Leadgenerierung oder Outreach-Kampagnen im Marketing.
 
-- **[M3KI – KI-Recherche](workflows/M3KI-KI-Recherche-GitHub.json):** Ergänzt die Recherche ausgewählter Kandidaten durch eine KI-gestützte Prüfung und führt die Ergebnisse in ein einheitliches Format zurück.
-- **[M6 – Freigabe](workflows/M6-Freigabe-GitHub.json):** Bildet den Human-in-the-loop-Schritt ab, in dem vorbereitete Bewerbungen und Vorschauunterlagen vor dem Versand geprüft und freigegeben werden.
-- **[M7 – Versand](workflows/M7-Versand-Gmail-GitHub.json):** Verarbeitet ausschließlich freigegebene Bewerbungen, prüft Versandvoraussetzungen und dokumentiert Sendeversuche sowie Ergebnisse als Schutz vor unkontrolliertem oder doppeltem Versand.
+## Die Workflows
 
-Für diese öffentliche Version wurden Credentials, interne IDs, E-Mail-Adressen, lokale Pfade und weitere sensible oder produktive Angaben entfernt beziehungsweise anonymisiert. Alle Workflows sind deaktiviert und benötigen vor einer eigenen Nutzung eine individuelle Konfiguration.
+- **[M2 – Qualifizierung](workflows/M2-Qualifizierung.json):** Prüft jedes gefundene Unternehmen nach festen Kriterien mit einem Sprachmodell, deckelt die Bewertung bei klaren Ausschlussgründen (zum Beispiel kein Agenturgeschäft oder Präsenzpflicht) und schreibt das Ergebnis nachvollziehbar zurück. Fehler werden separat festgehalten, statt den Lauf abzubrechen.
+- **[M6 – Berater](workflows/M6-Berater.json):** Fasst Recherche und Bewertungen zu einer Einschätzung zusammen. Belegte Fakten und Ableitungen werden strikt getrennt; Fachbegriffe und Jobtitel werden in einfachen Worten erklärt. Eine Längenprüfung korrigiert zu lange Antworten automatisch.
+- **[M7 – Versand](workflows/M7-Versand-Gmail.json):** Versendet ausschließlich freigegebene Nachrichten, prüft vorher Empfänger, Anrede, Platzhalter und Anhang und protokolliert jeden Versuch – als Schutz vor unkontrolliertem oder doppeltem Versand. In dieser Fassung ist der Echtversand ausgeschaltet.
 
-Live-Demo & Portfolio: [https://jerome-wolfarth-portfolio.vercel.app](https://jerome-wolfarth-portfolio.vercel.app)
+## Grundsätze
+
+- **Der Mensch entscheidet:** Nichts geht ohne manuelle Freigabe hinaus.
+- **KI nur, wo sie hilft:** Eindeutige Aufgaben wie Dubletten, Statuswechsel und Versandprüfungen laufen regelbasiert.
+- **Kosten im Blick:** Bei der Überarbeitung im November 2026 habe ich die Modelle neu gewählt und rund die Hälfte der Abläufe stillgelegt – mit rund 90 % niedrigeren KI-Kosten.
+
+## Hinweise
+
+Für diese öffentliche Fassung wurden Zugangsdaten, Tabellen-IDs, E-Mail-Adressen, lokale Pfade und weitere interne Angaben entfernt oder durch Platzhalter ersetzt. Die Workflows sind deaktiviert und brauchen vor einer eigenen Nutzung eine eigene Konfiguration (Google Sheets, OpenAI, Gmail).
+
+Portfolio und klickbare Demo: [jerome-wolfarth-portfolio.vercel.app](https://jerome-wolfarth-portfolio.vercel.app)

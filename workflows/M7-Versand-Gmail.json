@@ -1,0 +1,720 @@
+{
+  "name": "M7 - Bewerbungsversand ueber Gmail",
+  "nodes": [
+    {
+      "id": "9aab26ce-85dd-43b2-ad15-a97be4eb1369",
+      "name": "M7 starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "bfacf7aa-f030-4114-b537-cec21503b1c5",
+      "name": "M6_Freigabe laden",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "DEINE_SHEET_ID"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": "M6_Freigabe"
+        },
+        "options": {}
+      },
+      "notes": "Nur lesen. M7 schreibt niemals nach M6_Freigabe.",
+      "executeOnce": true
+    },
+    {
+      "id": "68f9ebf5-e194-4a07-b0ba-8379fd0f67e3",
+      "name": "M7_Versand laden",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "DEINE_SHEET_ID"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": "M7_Versand"
+        },
+        "options": {}
+      },
+      "notes": "Doppelversand-Sperre. Faellt der Node aus, erkennt der naechste Node das Fehleritem und bricht ab. Der sichere Ausgang ist nicht senden.",
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "44027953-0cc4-4733-8399-20e6aa278747",
+      "name": "Kandidaten pruefen und Mail bauen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const ECHTVERSAND_FREIGESCHALTET = false;\nconst TESTADRESSE = \"bewerbung@example.com\";\nconst ANHANGNAME = \"Bewerbungsunterlagen_Jerome_Wolfarth.pdf\";\nconst FINAL_ORDNER = \"/pfad/zu/deinen/dateien\";\nconst MIN_TEXT_ZEICHEN = 300;\nconst NL = String.fromCharCode(10);\nconst AUF = String.fromCharCode(123) + String.fromCharCode(123);\nconst ZU = String.fromCharCode(125) + String.fromCharCode(125);\nconst PLATZHALTER_DATUM = AUF + \"DATUM\" + ZU;\n\nconst LAUF_MODUS = ECHTVERSAND_FREIGESCHALTET ? \"ECHT\" : \"TEST\";\n\n// Das Frontend uebergibt fuer genau diesen Lauf die bewusst ausgewaehlten IDs.\n// Ohne Auswahl wird sicher abgebrochen; ein manueller Start kann dadurch nie\n// versehentlich alle freigegebenen Bewerbungen versenden.\nconst AUSWAHL_ROH = String($env.M7_AUSWAHL_JSON || \"\").trim();\nif (!AUSWAHL_ROH) { throw new Error(\"Keine Versandauswahl uebergeben. Es wird nichts gesendet.\"); }\nlet auswahlIds;\ntry { auswahlIds = JSON.parse(AUSWAHL_ROH); }\ncatch { throw new Error(\"Die Versandauswahl ist ungueltig. Es wird nichts gesendet.\"); }\nif (!Array.isArray(auswahlIds) || auswahlIds.length === 0) {\n  throw new Error(\"Die Versandauswahl ist leer. Es wird nichts gesendet.\");\n}\nauswahlIds = auswahlIds.map(function(id) { return String(id || \"\").trim(); });\nif (auswahlIds.some(function(id) { return !id; }) || new Set(auswahlIds).size !== auswahlIds.length) {\n  throw new Error(\"Die Versandauswahl enthaelt leere oder doppelte IDs. Es wird nichts gesendet.\");\n}\nconst auswahl = new Set(auswahlIds);\n\n// M7 akzeptiert nur den serverseitig unmittelbar vor diesem Lauf erneut\n// geprüften Stand. Ein manueller CLI-Start ohne dieses Manifest bricht ab.\nconst FREIGABE_ROH = String($env.M7_FREIGABE_JSON || \"\").trim();\nif (!FREIGABE_ROH) { throw new Error(\"Finales Freigabemanifest fehlt. Es wird nichts gesendet.\"); }\nlet freigabenFinal;\ntry { freigabenFinal = JSON.parse(FREIGABE_ROH); }\ncatch { throw new Error(\"Finales Freigabemanifest ist ungueltig. Es wird nichts gesendet.\"); }\nif (!Array.isArray(freigabenFinal) || freigabenFinal.length !== auswahlIds.length) {\n  throw new Error(\"Finales Freigabemanifest passt nicht zur Auswahl. Es wird nichts gesendet.\");\n}\nconst freigabeNachId = new Map();\nfor (const f of freigabenFinal) {\n  const fid = String(f && f.stellen_id || \"\").trim();\n  const hash = String(f && f.fingerabdruck || \"\").trim().toLowerCase();\n  if (!fid || !/^[a-f0-9]{64}$/.test(hash) || freigabeNachId.has(fid)) {\n    throw new Error(\"Finales Freigabemanifest enthaelt ungueltige oder doppelte Eintraege. Es wird nichts gesendet.\");\n  }\n  freigabeNachId.set(fid, hash);\n}\nif (auswahlIds.some(function(id) { return !freigabeNachId.has(id); })) {\n  throw new Error(\"Finales Freigabemanifest deckt die Auswahl nicht ab. Es wird nichts gesendet.\");\n}\n\nconst freigaben = $(\"M6_Freigabe laden\").all();\nconst versand = $(\"M7_Versand laden\").all();\n\nfor (const v of versand) {\n  if (v.json && v.json.error) { throw new Error(\"M7_Versand konnte nicht gelesen werden. Ohne funktionierende Doppelversand-Sperre wird nichts gesendet. Fehler: \" + String(v.json.error)); }\n}\n\n// Schluesselpruefung. Der Schluessel versand_schluessel ist die einzige Spalte,\n// auf die die Schreibnodes matchen. Ist er bei einer relevanten Zeile leer oder\n// passt er nicht zu stellen_id und modus, koennte ein Schreibvorgang die falsche\n// Zeile treffen. Dann wird abgebrochen. Es wird nichts geraten und nichts repariert.\nconst schluesselMaengel = [];\nfor (const v of versand) {\n  const j = v.json || {};\n  const id = String(j.stellen_id || \"\").trim();\n  const st = String(j.versand_status || \"\").trim().toUpperCase();\n  if (!id || !st) { continue; }\n  const wo = \"Zeile \" + (j.row_number === undefined ? \"?\" : j.row_number) + \" (\" + id + \")\";\n  const md = String(j.modus || \"\").trim().toUpperCase();\n  const key = String(j.versand_schluessel || \"\").trim();\n  if (!key) { schluesselMaengel.push(wo + \": versand_schluessel ist leer\"); continue; }\n  if (md !== \"TEST\" && md !== \"ECHT\") { schluesselMaengel.push(wo + \": modus ist \" + (md || \"leer\") + \", erlaubt sind nur TEST und ECHT\"); continue; }\n  const erwartet = id + \"|\" + md;\n  if (key !== erwartet) { schluesselMaengel.push(wo + \": versand_schluessel ist \" + key + \", erwartet waere \" + erwartet); }\n}\nif (schluesselMaengel.length > 0) {\n  throw new Error(\"M7_Versand ist nicht schluessig. Ohne verlaesslichen Schluessel wird nichts gesendet und nichts automatisch repariert. Bitte die Zeilen von Hand pruefen: \" + schluesselMaengel.join(\" | \"));\n}\n\n// Sperrlogik nach Modus.\n// ECHT-Zeilen sperren immer, auch einen Testlauf.\n// Zeilen ohne erkennbaren Modus sperren ebenfalls immer, der sichere Ausgang.\n// TEST-Zeilen sperren nur einen weiteren Testlauf und niemals einen Echtversand.\nconst gesperrt = {};\nfor (const v of versand) {\n  const j = v.json || {};\n  const id = String(j.stellen_id || \"\").trim();\n  const st = String(j.versand_status || \"\").trim().toUpperCase();\n  const md = String(j.modus || \"\").trim().toUpperCase();\n  if (!id || !st) { continue; }\n  const sperrtDiesenLauf = (md === \"TEST\") ? (LAUF_MODUS === \"TEST\") : true;\n  if (sperrtDiesenLauf) { gesperrt[id] = st + \" / \" + (md || \"ohne Modus\"); }\n}\n\nfunction markenname(value) {\n  const original = String(value || \"\").replace(/\\u00a0/g, \" \").replace(/\\s+/g, \" \").trim();\n  if (!original) return \"\";\n  const ohneKlammern = original.replace(/\\s*\\([^)]*\\)\\s*/g, \" \");\n  const ohneRechtsform = ohneKlammern.replace(/\\s+(?:gmbh\\s*&\\s*co\\.?\\s*kg|gmbh|ug\\s*(?:\\(haftungsbeschr[aä]nkt\\))?|ag|se|kg|ohg|gbr|mbh|e\\.?\\s*k\\.?|ltd\\.?|limited|inc\\.?|llc)\\b\\.?/gi, \" \");\n  return ohneRechtsform.replace(/\\s+[-–—|]\\s*(?:automatisierungsunternehmen|digitalagentur|agentur|unternehmen).*$/i, \"\").replace(/[\\s,;|\\-–—]+$/g, \"\").replace(/\\s+/g, \" \").trim() || original;\n}\n\nconst kandidaten = [];\nconst maengel = [];\n\nfor (const zeile of freigaben) {\n  const j = zeile.json || {};\n  const id = String(j.stellen_id || \"\").trim();\n  if (!id) { continue; }\n\n  if (!auswahl.has(id)) { continue; }\n\n  const entscheidung = String(j.entscheidung || \"\").trim().toUpperCase();\n  const status = String(j.m6_status || \"\").trim().toUpperCase();\n  if (entscheidung !== \"JA\") { continue; }\n  if (status !== \"FREIGEGEBEN\") { continue; }\n  if (gesperrt[id]) { continue; }\n\n  const fehlt = [];\n\n  const empfaenger = String(j.empfaenger_email || \"\").trim();\n  if (!empfaenger) { fehlt.push(\"empfaenger_email fehlt\"); }\n  else if (empfaenger.indexOf(\"@\") < 1 || empfaenger.indexOf(\".\") === -1 || empfaenger.indexOf(\" \") !== -1) { fehlt.push(\"empfaenger_email unplausibel: \" + empfaenger); }\n\n  const betreff = String(j.betreff || \"\").trim();\n  if (!betreff) { fehlt.push(\"betreff fehlt\"); }\n\n  const roh = String(j.anschreiben || \"\");\n  if (!roh.trim()) { fehlt.push(\"anschreiben fehlt\"); }\n\n  const pdfPfad = String(j.final_pdf_pfad || \"\").trim();\n  if (!pdfPfad) { fehlt.push(\"final_pdf_pfad fehlt, es gibt keine FINAL-PDF\"); }\n  else if (pdfPfad.indexOf(FINAL_ORDNER) !== 0) { fehlt.push(\"final_pdf_pfad zeigt nicht in den FINAL-Ordner: \" + pdfPfad); }\n\n  for (const spalte of Object.keys(j)) {\n    const wert = (j[spalte] === null || j[spalte] === undefined) ? \"\" : String(j[spalte]);\n    if (wert.indexOf(PLATZHALTER_DATUM) !== -1) { fehlt.push(\"Platzhalter DATUM steht noch in Spalte \" + spalte); }\n    else if (wert.indexOf(AUF) !== -1 && wert.indexOf(ZU) !== -1) { fehlt.push(\"unaufgeloester Platzhalter in Spalte \" + spalte); }\n  }\n\n  let text = \"\";\n  if (roh.trim()) {\n    const teile = roh.split(NL);\n    let ab = 0;\n    if (teile[0].indexOf(\"Betreff:\") === 0) {\n      ab = 1;\n      if (teile.length > 1 && teile[1].trim() === \"\") { ab = 2; }\n    }\n    text = teile.slice(ab).join(NL).trim();\n    if (text.indexOf(\"Betreff:\") !== -1) { fehlt.push(\"im Mailtext steht noch eine Betreff-Zeile\"); }\n    const ersteAnrede = (text.split(NL).find(function(z) { return z.trim(); }) || \"\").trim();\n    if (!/^(?:Hallo|Hi|Moin|Servus|Guten Tag|Guten Morgen|Sehr geehrte|Liebe|Lieber)\\b[^\\n]*,\\s*$/.test(ersteAnrede)) { fehlt.push(\"Mailtext beginnt nicht mit einer Anrede\"); }\n    const firmaFuerAnrede = markenname(j.firma);\n    const anredeSoll = \"Sehr geehrtes \" + firmaFuerAnrede + \"-Team,\";\n    const ersteZeile = text.split(NL).find(function(z) { return z.trim(); });\n    if (!ersteZeile || !/^(?:Hallo|Hi|Moin|Servus|Guten Tag|Guten Morgen|Sehr geehrte|Liebe|Lieber)\\b[^\\n]*,\\s*$/.test(ersteZeile.trim())) { fehlt.push(\"Anrede fehlt oder ist unvollstaendig (Beispiel: \" + anredeSoll + \")\"); }\n    if (text.length < MIN_TEXT_ZEICHEN) { fehlt.push(\"Mailtext ist mit \" + text.length + \" Zeichen zu kurz\"); }\n  }\n\n  if (fehlt.length > 0) { maengel.push(id + \": \" + fehlt.join(\"; \")); continue; }\n\n  const sendTo = ECHTVERSAND_FREIGESCHALTET ? empfaenger : TESTADRESSE;\n  if (!ECHTVERSAND_FREIGESCHALTET && sendTo !== TESTADRESSE) { throw new Error(\"Testmodus verletzt. Abbruch.\"); }\n  if (!sendTo) { throw new Error(\"Kein Empfaenger ermittelt. Abbruch.\"); }\n\n  kandidaten.push({ json: {\n    stellen_id: id,\n    firma: String(j.firma || \"\"),\n    empfaenger_echt: empfaenger,\n    sendTo: sendTo,\n    subject: betreff,\n    message: text,\n    message_zeichen: text.length,\n    final_pdf_pfad: pdfPfad,\n    anhang_datei: ANHANGNAME,\n    modus: LAUF_MODUS,\n    versand_schluessel: id + \"|\" + LAUF_MODUS,\n    freigabe_fingerabdruck: freigabeNachId.get(id)\n  } });\n}\n\nif (maengel.length === 0 && kandidaten.length !== auswahl.size) {\n  const gefunden = new Set(kandidaten.map(function(k) { return String(k.json.stellen_id || \"\"); }));\n  const fehlen = auswahlIds.filter(function(id) { return !gefunden.has(id); });\n  throw new Error(\"Die Versandauswahl passt nicht mehr zum aktuellen Freigabestand. Nichts gesendet. Fehlend: \" + fehlen.join(\", \"));\n}\n\nif (maengel.length > 0) {\n  throw new Error(\"Pflichtpruefung fehlgeschlagen. Es wird nichts gesendet. \" + maengel.join(\" | \"));\n}\n\nreturn kandidaten;\n"
+      },
+      "notes": "Harte Konstante ECHTVERSAND_FREIGESCHALTET steuert, ob echte Firmenadressen verwendet werden. Umschalten ist eine eigene, bewusste Aenderung."
+    },
+    {
+      "id": "624d5fc6-ceef-4c7f-b4c2-407e029166cc",
+      "name": "Sendeversuch eintragen",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1320,
+        0
+      ],
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "DEINE_SHEET_ID"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": "M7_Versand"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "stellen_id": "={{ $json.stellen_id }}",
+            "firma": "={{ $json.firma }}",
+            "empfaenger_email": "={{ $json.sendTo }}",
+            "versand_status": "SENDEVERSUCH",
+            "gesendet_am": "",
+            "gmail_message_id": "",
+            "gmail_thread_id": "",
+            "anhang_datei": "={{ $json.anhang_datei }}",
+            "anhang_bytes": "",
+            "modus": "={{ $json.modus }}",
+            "versand_fehler": "",
+            "versand_schluessel": "={{ $json.versand_schluessel }}"
+          },
+          "matchingColumns": [
+            "versand_schluessel"
+          ],
+          "schema": [
+            {
+              "id": "stellen_id",
+              "displayName": "stellen_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "firma",
+              "displayName": "firma",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "empfaenger_email",
+              "displayName": "empfaenger_email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "versand_status",
+              "displayName": "versand_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "gesendet_am",
+              "displayName": "gesendet_am",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "gmail_message_id",
+              "displayName": "gmail_message_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "gmail_thread_id",
+              "displayName": "gmail_thread_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "anhang_datei",
+              "displayName": "anhang_datei",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "anhang_bytes",
+              "displayName": "anhang_bytes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "modus",
+              "displayName": "modus",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "versand_fehler",
+              "displayName": "versand_fehler",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "versand_schluessel",
+              "displayName": "versand_schluessel",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {
+          "handlingExtraData": "ignoreIt"
+        }
+      },
+      "notes": "Wird vor dem Versand geschrieben. Bricht n8n danach ab, blockiert diese Zeile jeden weiteren Versand.",
+      "onError": "stopWorkflow"
+    },
+    {
+      "id": "2f3fb5cf-0ca8-4bfe-9275-7a616c096261",
+      "name": "FINAL-PDF laden",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [
+        1540,
+        0
+      ],
+      "parameters": {
+        "operation": "read",
+        "fileSelector": "={{ $('Kandidaten pruefen und Mail bauen').item.json.final_pdf_pfad }}",
+        "options": {
+          "dataPropertyName": "data"
+        }
+      }
+    },
+    {
+      "id": "bdc03c99-992e-4265-a01c-f1c4e5a8f7d4",
+      "name": "Anhang benennen und pruefen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const ANHANGNAME = \"Bewerbungsunterlagen_Jerome_Wolfarth.pdf\";\nconst MINDESTGROESSE = 1000000;\n\nconst items = $input.all();\nconst quelle = $(\"Kandidaten pruefen und Mail bauen\").all();\nif (items.length !== quelle.length) { throw new Error(\"Item-Anzahl passt nicht zusammen: \" + items.length + \" PDFs zu \" + quelle.length + \" Kandidaten. Nicht senden.\"); }\n\nconst raus = [];\nfor (let i = 0; i < items.length; i++) {\n  const item = items[i];\n  const basis = quelle[i].json;\n  if (!item.binary || !item.binary.data) { throw new Error(\"Kein Anhang geladen fuer \" + basis.stellen_id + \". Nicht senden.\"); }\n  const buffer = await this.helpers.getBinaryDataBuffer(i, \"data\");\n  if (buffer.length < MINDESTGROESSE) { throw new Error(\"FINAL-PDF fuer \" + basis.stellen_id + \" ist nur \" + buffer.length + \" Bytes gross, unter 1 MB. Nicht senden.\"); }\n  if (buffer.slice(0, 5).toString(\"utf8\") !== \"%PDF-\") { throw new Error(\"Datei fuer \" + basis.stellen_id + \" ist keine PDF. Nicht senden.\"); }\n  item.binary.data.fileName = ANHANGNAME;\n  item.binary.data.fileExtension = \"pdf\";\n  item.binary.data.mimeType = \"application/pdf\";\n  item.json = Object.assign({}, basis, { anhang_datei: ANHANGNAME, anhang_bytes: buffer.length });\n  raus.push(item);\n}\nreturn raus;\n"
+      }
+    },
+    {
+      "id": "20f7d1c3-b314-4a33-90e2-8dd4cad6daf3",
+      "name": "Bewerbung senden",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1980,
+        0
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "={{ $json.sendTo }}",
+        "subject": "={{ $json.subject }}",
+        "emailType": "text",
+        "message": "={{ $json.message }}",
+        "options": {
+          "appendAttribution": false,
+          "senderName": "Jerome Wolfarth",
+          "replyTo": "bewerbung@example.com",
+          "attachmentsUi": {
+            "attachmentsBinary": [
+              {
+                "property": "data"
+              }
+            ]
+          }
+        }
+      },
+      "notes": "Empfaenger kommt aus sendTo. Im Testmodus ist das immer die Testadresse.",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "cae4abad-6ecd-4371-b3f3-372cff618bf2",
+      "name": "Versand festhalten",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        2200,
+        -120
+      ],
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "DEINE_SHEET_ID"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": "M7_Versand"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "stellen_id": "={{ $('Anhang benennen und pruefen').item.json.stellen_id }}",
+            "firma": "={{ $('Anhang benennen und pruefen').item.json.firma }}",
+            "empfaenger_email": "={{ $('Anhang benennen und pruefen').item.json.sendTo }}",
+            "versand_status": "GESENDET",
+            "gesendet_am": "={{ $now.setZone(\"Europe/Berlin\").toFormat(\"yyyy-MM-dd HH:mm:ss\") }}",
+            "gmail_message_id": "={{ $json.id }}",
+            "gmail_thread_id": "={{ $json.threadId }}",
+            "anhang_datei": "={{ $('Anhang benennen und pruefen').item.json.anhang_datei }}",
+            "anhang_bytes": "={{ $('Anhang benennen und pruefen').item.json.anhang_bytes }}",
+            "modus": "={{ $('Anhang benennen und pruefen').item.json.modus }}",
+            "versand_fehler": "",
+            "versand_schluessel": "={{ $('Anhang benennen und pruefen').item.json.versand_schluessel }}"
+          },
+          "matchingColumns": [
+            "versand_schluessel"
+          ],
+          "schema": [
+            {
+              "id": "stellen_id",
+              "displayName": "stellen_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "firma",
+              "displayName": "firma",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "empfaenger_email",
+              "displayName": "empfaenger_email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "versand_status",
+              "displayName": "versand_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "gesendet_am",
+              "displayName": "gesendet_am",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "gmail_message_id",
+              "displayName": "gmail_message_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "gmail_thread_id",
+              "displayName": "gmail_thread_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "anhang_datei",
+              "displayName": "anhang_datei",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "anhang_bytes",
+              "displayName": "anhang_bytes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "modus",
+              "displayName": "modus",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "versand_fehler",
+              "displayName": "versand_fehler",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "versand_schluessel",
+              "displayName": "versand_schluessel",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {
+          "handlingExtraData": "ignoreIt"
+        }
+      }
+    },
+    {
+      "id": "c48f6ec2-d318-42fe-95a8-f70a757f63fb",
+      "name": "Fehler festhalten",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        2200,
+        140
+      ],
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "DEINE_SHEET_ID"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": "M7_Versand"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "stellen_id": "={{ $('Anhang benennen und pruefen').item.json.stellen_id }}",
+            "firma": "={{ $('Anhang benennen und pruefen').item.json.firma }}",
+            "empfaenger_email": "={{ $('Anhang benennen und pruefen').item.json.sendTo }}",
+            "versand_status": "FEHLER",
+            "gesendet_am": "={{ $now.setZone(\"Europe/Berlin\").toFormat(\"yyyy-MM-dd HH:mm:ss\") }}",
+            "gmail_message_id": "",
+            "gmail_thread_id": "",
+            "anhang_datei": "={{ $('Anhang benennen und pruefen').item.json.anhang_datei }}",
+            "anhang_bytes": "={{ $('Anhang benennen und pruefen').item.json.anhang_bytes }}",
+            "modus": "={{ $('Anhang benennen und pruefen').item.json.modus }}",
+            "versand_fehler": "={{ $json.error && $json.error.message ? $json.error.message : $json.error }}",
+            "versand_schluessel": "={{ $('Anhang benennen und pruefen').item.json.versand_schluessel }}"
+          },
+          "matchingColumns": [
+            "versand_schluessel"
+          ],
+          "schema": [
+            {
+              "id": "stellen_id",
+              "displayName": "stellen_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "firma",
+              "displayName": "firma",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "empfaenger_email",
+              "displayName": "empfaenger_email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "versand_status",
+              "displayName": "versand_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "gesendet_am",
+              "displayName": "gesendet_am",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "gmail_message_id",
+              "displayName": "gmail_message_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "gmail_thread_id",
+              "displayName": "gmail_thread_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "anhang_datei",
+              "displayName": "anhang_datei",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "anhang_bytes",
+              "displayName": "anhang_bytes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "modus",
+              "displayName": "modus",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "versand_fehler",
+              "displayName": "versand_fehler",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "versand_schluessel",
+              "displayName": "versand_schluessel",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {
+          "handlingExtraData": "ignoreIt"
+        }
+      },
+      "notes": "Bleibt als FEHLER stehen und blockiert weitere Versuche, bis die Zeile manuell geprueft wurde."
+    }
+  ],
+  "connections": {
+    "M7 starten": {
+      "main": [
+        [
+          {
+            "node": "M6_Freigabe laden",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "M6_Freigabe laden": {
+      "main": [
+        [
+          {
+            "node": "M7_Versand laden",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "M7_Versand laden": {
+      "main": [
+        [
+          {
+            "node": "Kandidaten pruefen und Mail bauen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Kandidaten pruefen und Mail bauen": {
+      "main": [
+        [
+          {
+            "node": "Sendeversuch eintragen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sendeversuch eintragen": {
+      "main": [
+        [
+          {
+            "node": "FINAL-PDF laden",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "FINAL-PDF laden": {
+      "main": [
+        [
+          {
+            "node": "Anhang benennen und pruefen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Anhang benennen und pruefen": {
+      "main": [
+        [
+          {
+            "node": "Bewerbung senden",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Bewerbung senden": {
+      "main": [
+        [
+          {
+            "node": "Versand festhalten",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fehler festhalten",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false
+}

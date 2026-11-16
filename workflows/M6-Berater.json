@@ -1,0 +1,799 @@
+{
+  "name": "M6 – Berater",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "d9942958-bc6a-4d77-9173-9a69e2a4752c",
+      "name": "Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        48
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "DEINE_SHEET_ID"
+        },
+        "title": "M6_Berater",
+        "options": {}
+      },
+      "id": "913585a9-7020-4c42-aae9-44daaa9f94cd",
+      "name": "Tab M6_Berater anlegen",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        224,
+        144
+      ],
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "4ae22392-ef8e-491d-8797-5e074100cbb1",
+      "name": "Von M5O starten",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "https://sheets.googleapis.com/v4/spreadsheets/DEINE_SHEET_ID/values/M6_Berater!A1:R1",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleSheetsOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "valueInputOption",
+              "value": "RAW"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"values\":[[\"stellen_id\",\"firma\",\"berater_status\",\"berater_kurzfazit\",\"berater_text\",\"firma_macht_konkret\",\"wahrscheinliche_aufgaben\",\"arbeitsalltag\",\"lernwert\",\"builder_anteil\",\"zukunftswert\",\"risiken\",\"empfehlung\",\"quellen\",\"berater_wortzahl\",\"berater_geprueft_am\",\"berater_stil\",\"chatgpt_json\"]]}",
+        "options": {}
+      },
+      "id": "aa32f6c8-c4f1-40aa-b7ec-49211efe5983",
+      "name": "Kopfzeile sicherstellen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        448,
+        144
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "DEINE_SHEET_ID"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": "Agentursuche"
+        },
+        "options": {}
+      },
+      "id": "b91416b4-02c2-413b-8a5c-66672716be8a",
+      "name": "Agentursuche laden",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        672,
+        144
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "DEINE_SHEET_ID"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": "M6_Berater"
+        },
+        "options": {}
+      },
+      "id": "d795ff1a-e6c3-4e28-9fad-8f4e984b520d",
+      "name": "Bisherige Beratungen laden",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        896,
+        144
+      ],
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Baut je offener Agentur genau EINEN Beratungsauftrag.\n// Bereich A kommt ausschliesslich aus bkBelegbasis() - derselben Funktion, mit\n// der der Pruefer spaeter belegt/nicht belegt entscheidet.\n// Alte Beratungsergebnisse werden NICHT mehr als Faktenquelle eingespeist.\n\n// ===================== BELEG-KERN v1 =====================\n// Einzige Quelle der Wahrheit fuer Datenreinigung, Belegbasis und Ableitungsregeln.\n// Dieser Block wird von baue.js WOERTLICH in beide Code-Knoten eingesetzt:\n//   \"Kandidaten und Prompt bauen\"  und  \"Beratung auswerten\".\n// Aenderungen ausschliesslich hier vornehmen, danach baue.js laufen lassen.\n// preflight.js prueft, dass beide Knoten denselben Block enthalten.\n\n// Modelle und Tabellen liefern Umlaute teilweise zerlegt (o + U+0308 statt oe).\n// Ohne Normalisierung trifft kein Muster mit Umlaut - \"koenntest\" wird erkannt,\n// \"könntest\" nicht. Deshalb wird JEDER Text zuerst nach NFC zusammengezogen.\nfunction bkNfc(v) {\n  var s = String(v == null ? '' : v);\n  try { return s.normalize('NFC'); } catch (e) { return s; }\n}\n\nfunction bkText(v) {\n  return bkNfc(v).replace(/ /g, ' ').replace(/\\s+/g, ' ').trim();\n}\n\n// ---- Analyse- und Meta-Etiketten -----------------------------------------\n// Diese Etiketten stehen in den M3-Feldern und leiten unsere EIGENE Bewertung\n// oder eine Recherchenotiz ein - keinen Firmenfakt. Ab dem Etikett bis zum Ende\n// des Blocks gehoert der Text nicht mehr in die Firmenfakten.\nvar BK_ANALYSE = [\n  /Passung f(?:ü|ue)r Jerome\\s*:/i,\n  /Umsetzungsn(?:ä|ae)he laut M2\\s*:/i,\n  /laut M2\\s*:/i,\n  /laut M4\\s*:/i,\n  /aus M1KI\\s*:/i,\n  /Gr(?:ö|oe)(?:ß|ss)te Chance\\s*:/i,\n  /Gr(?:ö|oe)(?:ß|ss)tes Risiko\\s*:/i,\n  /Fachlicher Fit\\s*:/i,\n  /Lernchance\\s*:/i,\n  /Lernwert\\s*:/i,\n  /Eignung\\s*:/i,\n  // Bewerberperspektive ohne Namensnennung\n  /Ein(?:e)?\\s+Quereinsteiger\\w*/i,\n  /F(?:ü|ue)r\\s+(?:einen|eine)\\s+(?:Quereinsteiger|Einsteiger|Bewerber)\\w*/i\n];\n\nvar BK_META = [\n  /manuell verifiziert/i,\n  /\\d+\\s+von\\s+\\d+\\s+gepr(?:ü|ue)ften Firmenseiten/i,\n  /\\d+\\s+Unterseite\\(?n?\\)?\\s+als Catch-all/i,\n  /Quellen\\s*:\\s*https?:/i,\n  /Karriereseite vorhanden\\s*:/i,\n  /laut Datensatz\\s*:/i,\n  /Stand der Recherche\\s*:/i,\n  /Nur informativ/i\n];\n\n// ---- Navigationswortschatz ------------------------------------------------\n// Ein Segment gilt als Menue, wenn es ueberwiegend aus diesen Woertern besteht.\n// Einzelne Treffer schaden nicht - erst der Anteil entscheidet.\nvar BK_NAV_WORT = ('zum inhalt springen skip to content cookie cookies einstellungen startseite start home impressum '\n  + 'datenschutz datenschutzerklaerung agb kontakt kontaktformular menue menu navigation suchen suche login anmelden '\n  + 'leistungen referenzen kompetenzen vorgehen produkt produkte unternehmen team labor karriere blog news presse faq '\n  + 'ueber uber uns de en deutsch english sprache mehr erfahren weiterlesen jetzt hier klicken nach oben seite '\n  + 'anfragen erstberatung vorprojekt beratungsgespraech termin demo angebot prozess prozesse tools services '\n  + 'portfolio loesungen branchen partner downloads newsletter').split(' ');\n\nvar BK_NAV_SET = {};\nfor (var bkI = 0; bkI < BK_NAV_WORT.length; bkI++) {\n  BK_NAV_SET[BK_NAV_WORT[bkI]] = true;\n}\n\nvar BK_NAV_PHRASE = /zum inhalt springen|skip to content|cookie[- ]?einstellung|cookie[- ]?hinweis|alle akzeptieren|nach oben scrollen/i;\n\n// ---- Verneinung -----------------------------------------------------------\n// Wirkt ab jetzt NUR noch auf das Segment, in dem sie steht.\nvar BK_NEGATIV = /nicht ersichtlich|nicht bekannt|nicht belegt|nicht nachweisbar|nicht gesichert|nicht dokumentiert|nicht klar|nicht vollst(?:ä|ae)ndig belegt|nichts belegt|nichts bekannt|nichts gesichert|nichts dokumentiert|l(?:ä|ae)sst sich (?:bisher |derzeit |aktuell |so )?nicht sagen|unbekannt|unklar|keine angaben|keine konkreten|keine information|bleibt offen|ist offen|fraglich/i;\n\n// ---- Ableitungskennzeichen ------------------------------------------------\n// Prompt und Pruefer benutzen exakt diese Liste. Ein Satz ueber Jeromes\n// moegliche Arbeit MUSS eines dieser Woerter enthalten.\nvar BK_ABLEITUNG = /\\b(k(?:ö|oe)nnte(?:st|n|t)?|w(?:ü|ue)rde(?:st|n|t)?|w(?:ä|ae)re(?:n|st)?|d(?:ü|ue)rfte(?:st|n)?|m(?:ü|ue)sste(?:st|n)?|h(?:ä|ae)tte(?:st|n)?|wahrscheinlich|vermutlich|m(?:ö|oe)glicherweise|denkbar|naheliegend|voraussichtlich|anzunehmen|vorstellbar|nahe liegen)\\b/i;\n\n// Formulierungen, die auch mit Kennzeichen eine Tatsache behaupten.\nvar BK_ABSOLUT = /\\bdein (?:arbeits)?alltag (?:ist|sieht|besteht)\\b|\\bf(?:ü|ue)r dich sieht der (?:tag|alltag)\\b|\\bdu musst\\b|\\bdu wirst\\b|\\bdu bist dann\\b|\\bdeine aufgabe ist\\b/i;\n\n// Taetigkeitsaussage ueber Jerome.\nvar BK_TAETIGKEIT = /\\b(?:du|dein\\w*)\\b[^.!?]{0,120}\\b(?:arbeitest|arbeiten|baust|bauen|entwickelst|entwickeln|umsetzt|umsetzen|programmierst|programmieren|testest|testen|dokumentierst|dokumentieren|betreust|betreuen|verantwortest|verantworten|einsetzt|einsetzen|anbindest|anbinden|erkennst|weiterentwickelst|lernst|mitarbeitest)\\b/i;\n\n// Belegte Rolle. \"Karriereseite\" ist ausdruecklich KEIN Rollenbeleg -\n// eine vorhandene Karriereseite sagt nichts ueber eine passende offene Stelle.\nvar BK_ROLLE = /stellenausschreibung|stellenangebot|offene stelle|ausgeschriebene stelle|position ausgeschrieben|vakanz|wir suchen (?:ab|zum|einen|eine|dich|verst(?:ä|ae)rkung)|bewirb dich|werkstudent|praktikumsplatz|junior[- ]?(?:entwickler|berater|consultant|developer)/i;\n\n// ---- Segmentierung --------------------------------------------------------\n// Rohfeld -> Bloecke (an \" | \") -> Segmente (an Satzenden und Punktketten).\nfunction bkBloecke(v) {\n  return bkText(v)\n    .split(/\\s*\\|\\s*/)\n    .map(function (s) { return s.trim(); })\n    .filter(function (s) { return s; });\n}\n\nfunction bkSegmenteAusBlock(block) {\n  return String(block)\n    .split(/(?<=[.!?])\\s+|\\s+·\\s+|\\s+—\\s+|\\s+–\\s+|(?:\\s*\\.\\s*){2,}/)\n    .map(function (s) {\n      return s\n        .replace(/^[\\s.,;:·—–-]+/, '')\n        .replace(/[\\s.,;:·—–-]+$/, '')\n        .trim();\n    })\n    .filter(function (s) { return s; });\n}\n\nfunction bkIstNavigation(seg) {\n  var s = String(seg);\n\n  if (BK_NAV_PHRASE.test(s)) {\n    return true;\n  }\n\n  var w = s\n    .toLowerCase()\n    .replace(/[^a-z0-9äöüß\\s/-]/g, ' ')\n    .split(/\\s+/)\n    .filter(function (x) { return x; });\n\n  if (!w.length) {\n    return true;\n  }\n\n  var nav = 0;\n\n  for (var i = 0; i < w.length; i++) {\n    if (BK_NAV_SET[w[i]]) {\n      nav++;\n    }\n  }\n\n  var anteil = nav / w.length;\n\n  if (anteil >= 0.7) {\n    return true;\n  }\n\n  if (w.length <= 12 && anteil >= 0.5) {\n    return true;\n  }\n\n  // Reine Ziffern- oder Zeichenfragmente aus dem Seitenaufbau.\n  if (/^[0-9\\W_]+$/.test(s)) {\n    return true;\n  }\n\n  return false;\n}\n\n// Kernfunktion. Liefert die drei Anteile eines Rohfeldes getrennt zurueck.\n//   rein    - Firmenfakten, ohne Navigation, ohne Analyse, ohne Meta, ohne Verneinung\n//   analyse - unsere eigene Bewertung (gehoert nach B)\n//   meta    - Recherchenotizen (gehoeren nirgendwohin)\n//   offen   - Segmente mit ausdruecklicher Verneinung (gehoeren nach C)\n//   nav     - verworfene Menuesegmente, nur zur Messung\nfunction bkTrenne(v) {\n  var rein = [];\n  var analyse = [];\n  var meta = [];\n  var offen = [];\n  var nav = [];\n\n  var bloecke = bkBloecke(v);\n\n  for (var b = 0; b < bloecke.length; b++) {\n    var block = bloecke[b];\n\n    // Analyse- und Meta-Etikett schneidet den Rest des Blocks ab.\n    var schnitt = -1;\n    var artSchnitt = '';\n\n    for (var a = 0; a < BK_ANALYSE.length; a++) {\n      var m = block.match(BK_ANALYSE[a]);\n\n      if (m && (schnitt === -1 || m.index < schnitt)) {\n        schnitt = m.index;\n        artSchnitt = 'analyse';\n      }\n    }\n\n    for (var t = 0; t < BK_META.length; t++) {\n      var m2 = block.match(BK_META[t]);\n\n      if (m2 && (schnitt === -1 || m2.index < schnitt)) {\n        schnitt = m2.index;\n        artSchnitt = 'meta';\n      }\n    }\n\n    var kopf = block;\n    var rest = '';\n\n    if (schnitt >= 0) {\n      kopf = block.slice(0, schnitt);\n      rest = block.slice(schnitt);\n    }\n\n    if (rest) {\n      (artSchnitt === 'meta' ? meta : analyse).push(rest.trim());\n    }\n\n    var segs = bkSegmenteAusBlock(kopf);\n\n    // Der Schnitt kann einen angefangenen Satz hinterlassen (\"Sitz\" aus\n    // \"Sitz laut Datensatz: Koeln\"). Ein solcher Rest ist kein Firmenfakt.\n    if (schnitt >= 0 && segs.length) {\n      var letzt = segs[segs.length - 1]\n        .split(/\\s+/)\n        .filter(function (x) { return x; });\n\n      if (letzt.length <= 2) {\n        segs.pop();\n      }\n    }\n\n    for (var s = 0; s < segs.length; s++) {\n      var seg = segs[s];\n\n      if (bkIstNavigation(seg)) {\n        nav.push(seg);\n        continue;\n      }\n\n      if (BK_NEGATIV.test(seg)) {\n        offen.push(seg);\n        continue;\n      }\n\n      rein.push(seg);\n    }\n  }\n\n  return {\n    rein: bkEindeutig(rein),\n    analyse: bkEindeutig(analyse),\n    meta: bkEindeutig(meta),\n    offen: bkEindeutig(offen),\n    nav: nav\n  };\n}\n\n// Wiederholungen entfernen. Ersetzt die alte Eindeutigkeitsquote.\nfunction bkEindeutig(liste) {\n  var gesehen = {};\n  var out = [];\n\n  for (var i = 0; i < liste.length; i++) {\n    var k = liste[i]\n      .toLowerCase()\n      .replace(/[^a-z0-9äöüß]/g, '');\n\n    if (!k || gesehen[k]) {\n      continue;\n    }\n\n    gesehen[k] = true;\n    out.push(liste[i]);\n  }\n\n  return out;\n}\n\n// Gereinigter Fliesstext eines Feldes.\nfunction bkSauber(v) {\n  return bkTrenne(v).rein.join('. ');\n}\n\n// ---- Feldlisten -----------------------------------------------------------\n// EINE Liste fuer Bereich A und fuer die Belegbasis des Pruefers.\n// Aendert sich hier etwas, aendert es sich fuer beide gleichzeitig.\nvar BK_FIRMENFELDER = [\n  ['Rechtlicher Firmenname', 'm3b_rechtlicher_firmenname', 200],\n  ['Firmenkern', 'm3a_firmenkern', 1600],\n  ['Angebotene Leistungen', 'm3a_angebotene_leistungen', 1200],\n  ['Leistungen laut Website', 'm3b_leistungen', 1600],\n  ['Automatisierungsfokus', 'm3a_automatisierungsfokus', 600],\n  ['Kundennutzen', 'm3a_kundennutzen', 500],\n  ['Umsetzungsbelege', 'm3a_umsetzungsbelege', 400],\n  ['Umsetzungsbelege laut Website', 'm3b_umsetzungsbelege', 400],\n  ['Projekte und Referenzen', 'm3b_projekte_referenzen', 1600],\n  ['Anknuepfungspunkte', 'm3b_anknuepfungspunkte', 400],\n  ['Hinweis zum Team', 'm3b_team_hinweis', 300],\n  ['Technologien laut M3A', 'm3a_technologien', 400],\n  ['Technologien laut Website', 'm3b_technologien', 400]\n];\n\n// Baut Firmenfakten, Belegtext und offene Punkte in einem Durchgang.\n// Prompt und Pruefer rufen ausschliesslich diese Funktion auf.\nfunction bkBelegbasis(a) {\n  var fakten = [];\n  var belegTeile = [];\n  var offen = [];\n  var analyse = [];\n  var verworfen = [];\n  var gesehen = {};\n\n  for (var i = 0; i < BK_FIRMENFELDER.length; i++) {\n    var bez = BK_FIRMENFELDER[i][0];\n    var feld = BK_FIRMENFELDER[i][1];\n    var limit = BK_FIRMENFELDER[i][2];\n\n    var teil = bkTrenne(a ? a[feld] : '');\n\n    for (var x = 0; x < teil.analyse.length; x++) {\n      analyse.push(teil.analyse[x]);\n    }\n\n    for (var y = 0; y < teil.offen.length; y++) {\n      offen.push(bez + ': ' + teil.offen[y]);\n    }\n\n    if (teil.nav.length) {\n      verworfen.push(bez + ': ' + teil.nav.length + ' Menuesegment(e)');\n    }\n\n    if (!teil.rein.length) {\n      continue;\n    }\n\n    // Doppelte Segmente ueber Feldgrenzen hinweg nur einmal aufnehmen.\n    var neu = [];\n\n    for (var z = 0; z < teil.rein.length; z++) {\n      var k = teil.rein[z]\n        .toLowerCase()\n        .replace(/[^a-z0-9äöüß]/g, '');\n\n      if (gesehen[k]) {\n        continue;\n      }\n\n      gesehen[k] = true;\n      neu.push(teil.rein[z]);\n    }\n\n    if (!neu.length) {\n      continue;\n    }\n\n    var text = neu.join('. ');\n\n    if (text.length > limit) {\n      text = text.slice(0, limit) + ' ...';\n    }\n\n    fakten.push(bez + ': ' + text);\n    belegTeile.push(text);\n  }\n\n  return {\n    fakten: fakten,\n    belegText: belegTeile.join(' ').toLowerCase(),\n    offen: bkEindeutig(offen),\n    analyse: bkEindeutig(analyse),\n    verworfen: verworfen\n  };\n}\n\n// Ist eine Rolle bei dieser Firma belegt? Geprueft wird ausschliesslich der\n// gereinigte Belegtext, damit Recherchenotizen nichts ausloesen koennen.\nfunction bkRolleBelegt(belegText) {\n  return BK_ROLLE.test(bkNfc(belegText));\n}\n\n// Eine Frage oder ein offener Punkt ist keine Behauptung. \"Ob du remote\n// arbeiten kannst, solltest du nachfragen\" ist kein Verstoss.\nvar BK_FRAGE = /\\bob\\b|\\?|nachfragen|nachhaken|kl(?:ä|ae)ren|offene(?:r|s)? (?:punkt|frage)/i;\n\n// Saetze eines Textes.\nfunction bkSaetze(text) {\n  return bkNfc(text)\n    .split(/(?<=[.!?])\\s+/)\n    .map(function (s) { return s.trim(); })\n    .filter(function (s) { return s; });\n}\n\n// Eine Aussage ueber Jeromes moegliche Arbeit ist zulaessig, wenn der Satz ein\n// Ableitungskennzeichen traegt und keine absolute Wendung enthaelt.\nfunction bkAbleitungOk(roh) {\n  var satz = bkNfc(roh);\n\n  if (BK_ABSOLUT.test(satz)) {\n    return false;\n  }\n\n  return BK_ABLEITUNG.test(satz);\n}\n\n// Nebensaetze wie \"ohne dass du programmieren musst\" beschreiben eine\n// Eigenschaft des Werkzeugs, keine Taetigkeit Jeromes bei dieser Firma.\nvar BK_NEBENSATZ = /\\bohne (?:dass |zu )|\\bstatt dass du\\b|\\bsodass du nicht\\b|\\bdamit du nicht\\b/i;\n\n// Solche Nebensaetze aus dem Satz nehmen, bevor auf Taetigkeit geprueft wird.\nfunction bkOhneNebensaetze(satz) {\n  return String(satz)\n    .split(/[,;–—]| aber | jedoch | sondern /i)\n    .filter(function (t) {\n      return !BK_NEBENSATZ.test(t);\n    })\n    .join(' ');\n}\n\n// Verstoss gegen die Ableitungsregel: der Satz behauptet eine Taetigkeit,\n// ist keine Frage und kein offener Punkt - und traegt trotzdem kein Kennzeichen.\n// Prompt-Regel und Prueferregel sind damit dieselbe Regel.\nfunction bkTaetigkeitsverstoss(roh) {\n  var s = bkNfc(roh);\n\n  if (BK_ABSOLUT.test(s)) {\n    return false;\n  }\n\n  if (BK_NEGATIV.test(s) || BK_FRAGE.test(s)) {\n    return false;\n  }\n\n  if (!BK_TAETIGKEIT.test(bkOhneNebensaetze(s))) {\n    return false;\n  }\n\n  return !BK_ABLEITUNG.test(s);\n}\n\n// ---- Erklaerung ist keine Zuschreibung ------------------------------------\n// \"On-Premise bedeutet, dass die Loesung im Unternehmen laeuft und nicht in der\n// Cloud\" erklaert einen Fachbegriff. Es behauptet nichts ueber DIESE Firma.\n// Sobald sich der Satz auf die Firma bezieht, gilt die Ausnahme nicht mehr.\nvar BK_ERKLAERUNG = /\\bbedeutet\\b|\\bbedeuten\\b|\\bhei(?:ß|ss)t\\b|\\bd\\.h\\.|\\bsprich\\b|\\bgemeint ist\\b|\\bversteht man\\b|\\bnennt man\\b|(?:ä|ae)hnlich|vergleichbar|so wie|wie zum beispiel|zum beispiel|etwa wie|analog zu/i;\nvar BK_FIRMENBEZUG = /\\bhier\\b|\\bdort\\b|\\bbei ihnen\\b|\\bbei denen\\b|\\bin diesem fall\\b|\\bin ihrem fall\\b/i;\n\nfunction bkIstErklaerung(roh, firma) {\n  var s = bkNfc(roh);\n\n  if (!BK_ERKLAERUNG.test(s)) {\n    return false;\n  }\n\n  if (BK_FIRMENBEZUG.test(s)) {\n    return false;\n  }\n\n  var f = bkNfc(firma).trim().toLowerCase();\n\n  if (f && s.toLowerCase().indexOf(f) !== -1) {\n    return false;\n  }\n\n  return true;\n}\n\n// ---- JSON aus einer Modellantwort -----------------------------------------\n// Steht in beiden Knoten, die eine Modellantwort lesen (\"Laenge pruefen\" und\n// \"Beratung auswerten\"). Vorher hatte jeder Knoten seine eigene Fassung - der\n// Laengenknoten konnte eine Antwort mit echtem Zeilenumbruch nicht lesen und\n// hat die Laengenkorrektur stillschweigend uebersprungen.\nfunction bkAlleJson(t) {\n  var gefunden = [];\n  var i = 0;\n\n  while (true) {\n    var a = t.indexOf('{', i);\n\n    if (a === -1) {\n      break;\n    }\n\n    var tiefe = 0;\n    var imText = false;\n    var esc = false;\n    var ende = -1;\n\n    for (var k = a; k < t.length; k++) {\n      var ch = t[k];\n\n      if (esc) {\n        esc = false;\n        continue;\n      }\n\n      if (ch === '\\\\') {\n        if (imText) {\n          esc = true;\n        }\n        continue;\n      }\n\n      if (ch === '\"') {\n        imText = !imText;\n        continue;\n      }\n\n      if (imText) {\n        continue;\n      }\n\n      if (ch === '{') {\n        tiefe++;\n      } else if (ch === '}') {\n        tiefe--;\n\n        if (tiefe === 0) {\n          ende = k;\n          break;\n        }\n      }\n    }\n\n    if (ende === -1) {\n      break;\n    }\n\n    gefunden.push(t.slice(a, ende + 1));\n    i = ende + 1;\n  }\n\n  return gefunden;\n}\n\n// GPT setzt Absaetze als echten Zeilenumbruch mitten in den JSON-String.\n// JSON.parse bricht dann ab. Steuerzeichen INNERHALB von Zeichenketten werden\n// deshalb nachtraeglich escaped. Ausserhalb bleibt alles unveraendert.\nfunction bkSteuerzeichen(roh) {\n  var out = '';\n  var imText = false;\n  var esc = false;\n\n  for (var i = 0; i < roh.length; i++) {\n    var ch = roh[i];\n    var code = roh.charCodeAt(i);\n\n    if (esc) {\n      out += ch;\n      esc = false;\n      continue;\n    }\n\n    if (ch === '\\\\') {\n      out += ch;\n\n      if (imText) {\n        esc = true;\n      }\n\n      continue;\n    }\n\n    if (ch === '\"') {\n      imText = !imText;\n      out += ch;\n      continue;\n    }\n\n    if (imText && code < 32) {\n      out += (\n        ch === '\\n' ? '\\\\n'\n          : ch === '\\r' ? '\\\\r'\n          : ch === '\\t' ? '\\\\t'\n          : ' '\n      );\n      continue;\n    }\n\n    out += ch;\n  }\n\n  return out;\n}\n\n// Liefert das zusammengefuehrte Antwortobjekt oder null.\nfunction bkJsonParse(t) {\n  if (t && typeof t === 'object') {\n    return t;\n  }\n\n  if (typeof t !== 'string') {\n    return null;\n  }\n\n  var ziel = {};\n  var etwas = false;\n  var liste = bkAlleJson(t);\n\n  for (var i = 0; i < liste.length; i++) {\n    var o = null;\n\n    try {\n      o = JSON.parse(liste[i]);\n    } catch (e) {\n      try {\n        o = JSON.parse(bkSteuerzeichen(liste[i]));\n      } catch (e2) {\n        continue;\n      }\n    }\n\n    if (!o || typeof o !== 'object' || Array.isArray(o)) {\n      continue;\n    }\n\n    etwas = true;\n\n    var keys = Object.keys(o);\n\n    for (var k = 0; k < keys.length; k++) {\n      var key = keys[k];\n      var alt = ziel[key];\n      var neu = o[key];\n\n      var leer =\n        alt === undefined ||\n        alt === '' ||\n        (Array.isArray(alt) && alt.length === 0);\n\n      if (leer && neu !== undefined && neu !== '') {\n        ziel[key] = neu;\n      }\n    }\n  }\n\n  return etwas && ziel.berater_text !== undefined\n    ? ziel\n    : null;\n}\n\n// Rohtext aus einer n8n-OpenAI-Antwort holen. Ebenfalls in beiden Knoten gleich.\nfunction bkRohtext(row) {\n  var g = [];\n\n  function add(v) {\n    if (v == null || v === '') {\n      return;\n    }\n\n    if (typeof v === 'string') {\n      var t = v.trim();\n\n      if (t) {\n        g.push(t);\n      }\n\n      return;\n    }\n\n    if (Array.isArray(v)) {\n      for (var i = 0; i < v.length; i++) {\n        add(v[i]);\n      }\n\n      return;\n    }\n\n    if (typeof v !== 'object') {\n      return;\n    }\n\n    var felder = [\n      'output_text',\n      'text',\n      'message',\n      'response',\n      'data',\n      'result',\n      'content'\n    ];\n\n    for (var f = 0; f < felder.length; f++) {\n      if (v[felder[f]] !== undefined) {\n        add(v[felder[f]]);\n      }\n    }\n\n    if (Array.isArray(v.output)) {\n      for (var o = 0; o < v.output.length; o++) {\n        add(v.output[o]);\n      }\n    }\n  }\n\n  var oben = [\n    'output_text',\n    'output',\n    'response',\n    'data',\n    'result',\n    'content',\n    'text'\n  ];\n\n  for (var i = 0; i < oben.length; i++) {\n    add(row && row[oben[i]]);\n  }\n\n  add(\n    row &&\n    row.choices &&\n    row.choices[0] &&\n    row.choices[0].message &&\n    row.choices[0].message.content\n  );\n\n  if (!g.length) {\n    return null;\n  }\n\n  for (var k = 0; k < g.length; k++) {\n    if (\n      g[k].indexOf('{') !== -1 &&\n      g[k].indexOf('berater_text') !== -1\n    ) {\n      return g[k];\n    }\n  }\n\n  return g[g.length - 1];\n}\n\n// Wortzahl des Beratertexts einer Modellantwort. EINE Zaehlung fuer alle Knoten.\nfunction bkWortzahl(text) {\n  var t = bkNfc(text)\n    .replace(/\\s+/g, ' ')\n    .trim();\n\n  return t\n    ? t.split(' ').filter(function (x) { return x; }).length\n    : 0;\n}\n\nif (typeof module !== 'undefined' && module.exports) {\n  module.exports = {\n    bkNfc: bkNfc,\n    bkText: bkText,\n    bkBloecke: bkBloecke,\n    bkSegmenteAusBlock: bkSegmenteAusBlock,\n    bkIstNavigation: bkIstNavigation,\n    bkTrenne: bkTrenne,\n    bkEindeutig: bkEindeutig,\n    bkSauber: bkSauber,\n    bkBelegbasis: bkBelegbasis,\n    bkRolleBelegt: bkRolleBelegt,\n    bkSaetze: bkSaetze,\n    bkAbleitungOk: bkAbleitungOk,\n    bkTaetigkeitsverstoss: bkTaetigkeitsverstoss,\n    bkIstErklaerung: bkIstErklaerung,\n    bkOhneNebensaetze: bkOhneNebensaetze,\n    bkAlleJson: bkAlleJson,\n    bkSteuerzeichen: bkSteuerzeichen,\n    bkJsonParse: bkJsonParse,\n    bkRohtext: bkRohtext,\n    bkWortzahl: bkWortzahl,\n    BK_FIRMENFELDER: BK_FIRMENFELDER,\n    BK_ABLEITUNG: BK_ABLEITUNG,\n    BK_ABSOLUT: BK_ABSOLUT,\n    BK_TAETIGKEIT: BK_TAETIGKEIT,\n    BK_FRAGE: BK_FRAGE,\n    BK_NEGATIV: BK_NEGATIV,\n    BK_ROLLE: BK_ROLLE,\n    BK_ERKLAERUNG: BK_ERKLAERUNG\n  };\n}\n\n// =================== ENDE BELEG-KERN v1 ===================\n\nconst STIL = 'gespraech';\n\n// 0 = KEIN LIMIT.\n// Damit werden alle offenen Agenturen verarbeitet.\nconst TESTLIMIT = 0;\n\n// Nur diese stellen_id neu beraten. Leer = normales Verhalten.\n// Der einmalige Nachziehlauf aller fuenf Firmen am 10.08.2026 ist erledigt.\n// Wieder auf [] gesetzt: fertige Beratungen werden nicht erneut bezahlt.\n// Sobald bereits JA-Entscheidungen ohne fertige Beratung existieren, ist dies\n// ein gezielter Nachziehlauf. Dann duerfen ausschliesslich diese Firmen einen\n// kostenpflichtigen KI-Aufruf ausloesen. Ohne Nachziehfall bleibt der normale\n// M5O-Betrieb unveraendert und beraet alle neuen, fachlich fertigen Firmen.\nfunction beratungFertig(id) {\n  try {\n    return $('Bisherige Beratungen laden').all().some(i => bkText((i.json || {}).stellen_id) === id && bkText((i.json || {}).berater_status).toUpperCase() === 'FERTIG');\n  } catch (e) { return false; }\n}\n// Abgelehnte Firmen bekommen keine bezahlte Beratung mehr.\nlet ABGELEHNT = [];\ntry {\n  ABGELEHNT = $('M6 Freigaben laden').all().map(i => i.json || {})\n    .filter(r => bkText(r.entscheidung).toUpperCase() === 'NEIN' || bkText(r.m6_status).toUpperCase() === 'EXTERN_GESENDET').map(r => bkText(r.stellen_id));\n} catch (e) { ABGELEHNT = []; }\nlet NUR_DIESE = [];\ntry {\n  NUR_DIESE = $('M6 Freigaben laden').all()\n    .map(i => i.json || {})\n    .filter(r => c(r.entscheidung).toUpperCase() === 'JA')\n    .filter(r => ['FREIGEGEBEN', 'EXTERN_GESENDET', 'GESENDET'].indexOf(c(r.m6_status).toUpperCase()) === -1)\n    .filter(r => !beratungFertig(c(r.stellen_id)))\n    .map(r => c(r.stellen_id))\n    .filter(Boolean);\n} catch (e) {\n  NUR_DIESE = [];\n}\n\nfunction c(v) {\n  return bkText(v);\n}\n\nfunction kurz(v, n) {\n  const s = c(v);\n  return s.length > n\n    ? s.slice(0, n) + ' ...'\n    : s;\n}\n\nfunction unbelegt(v) {\n  const s = c(v).toLowerCase();\n\n  return (\n    !s ||\n    s.indexOf('nicht belegt') === 0 ||\n    s.indexOf('keine konkreten technologien') === 0\n  );\n}\n\nconst agenturen = $('Agentursuche laden')\n  .all()\n  .map(i => i.json);\n\nlet beratungen = [];\n\ntry {\n  beratungen = $('Bisherige Beratungen laden')\n    .all()\n    .map(i => i.json)\n    .filter(j => c(j.stellen_id));\n} catch (e) {\n  beratungen = [];\n}\n\nconst nachId = {};\n\nfor (const b of beratungen) {\n  nachId[c(b.stellen_id)] = b;\n}\n\nconst auftraege = [];\nconst uebersprungen = [];\n\nfor (const a of agenturen) {\n  const id = c(a.stellen_id);\n  const firma = c(a.firma);\n\n  if (!id || !firma) {\n    continue;\n  }\n\n  if (c(a.record_type).toUpperCase() !== 'COMPANY') {\n    continue;\n  }\n\n  if (c(a.quelle).toLowerCase() !== 'agentursuche') {\n    continue;\n  }\n\n  if (\n    NUR_DIESE.length &&\n    NUR_DIESE.indexOf(id) === -1\n  ) {\n    continue;\n  }\n\n  if (ABGELEHNT.indexOf(id) !== -1) {\n    continue;\n  }\n\n  if (c(a.m4_status).toUpperCase() !== 'FERTIG') {\n    uebersprungen.push(\n      firma + ': m4_status nicht FERTIG'\n    );\n    continue;\n  }\n\n  if (c(a.m5_status).toUpperCase() !== 'FERTIG') {\n    uebersprungen.push(\n      firma + ': m5_status nicht FERTIG'\n    );\n    continue;\n  }\n\n  const alt = nachId[id];\n\n  if (\n    alt &&\n    c(alt.berater_status).toUpperCase() === 'FERTIG'\n  ) {\n    const t = String(alt.berater_text || '');\n\n    const sauber =\n      t.indexOf('](') === -1 &&\n      t.toLowerCase().indexOf('http') === -1;\n\n    if (\n      sauber &&\n      c(alt.berater_stil) === STIL &&\n      NUR_DIESE.indexOf(id) === -1\n    ) {\n      uebersprungen.push(\n        firma + ': bereits beraten'\n      );\n      continue;\n    }\n  }\n\n  // ---- A) FIRMENFAKTEN, B) ANALYSEN, C) OFFEN - alles aus einer Quelle.\n  const basis = bkBelegbasis(a);\n  const firmenfakten = basis.fakten.join('\\n');\n  const rolleBelegt = bkRolleBelegt(basis.belegText);\n\n  // ---- B) unsere eigenen Einschaetzungen.\n  const bewertungen = [];\n\n  function bewertung(bezeichnung, wert, limit) {\n    if (unbelegt(wert)) {\n      return;\n    }\n\n    bewertungen.push(\n      bezeichnung + ': ' + kurz(wert, limit)\n    );\n  }\n\n  bewertung(\n    'M4-Analyse',\n    a.m4_analyse,\n    1800\n  );\n\n  bewertung(\n    'M4-Argumente',\n    a.m4_argumente,\n    700\n  );\n\n  bewertung(\n    'M4-Prioritaet',\n    a.m4_prioritaet,\n    40\n  );\n\n  bewertung(\n    'Passung zu Jerome',\n    a.m3a_passung_zu_jerome,\n    900\n  );\n\n  bewertung(\n    'Fachlicher Fit',\n    a.fachlicher_fit,\n    400\n  );\n\n  bewertung(\n    'Lernchance',\n    a.lernchance,\n    400\n  );\n\n  bewertung(\n    'Umsetzungsnaehe',\n    a.umsetzungsnaehe,\n    400\n  );\n\n  bewertung(\n    'Groesste Chance',\n    a.groesste_chance,\n    400\n  );\n\n  bewertung(\n    'Groesstes Risiko',\n    a.groesstes_risiko,\n    400\n  );\n\n  bewertung(\n    'M2-Begruendung',\n    a.m2_begruendung,\n    400\n  );\n\n  for (const x of basis.analyse) {\n    bewertungen.push(\n      'Aus den Recherchefeldern herausgeloest: ' +\n      kurz(x, 400)\n    );\n  }\n\n  // ---- C) ausdruecklich offen.\n  const offen = [];\n\n  if (unbelegt(a.remote_einschaetzung)) {\n    offen.push(\n      'Remote-Arbeit: keine Angabe, ob vollstaendig remote moeglich ist'\n    );\n  } else {\n    bewertungen.push(\n      'Remote-Einschaetzung: ' +\n      kurz(a.remote_einschaetzung, 300)\n    );\n  }\n\n  if (!rolleBelegt) {\n    offen.push(\n      'Offene Stelle: es ist keine passende Stelle ausgeschrieben. Jede Aussage ueber kuenftige Aufgaben ist eine Ableitung.'\n    );\n  }\n\n  function offenerPunkt(\n    bezeichnung,\n    wert,\n    limit\n  ) {\n    const s = c(wert);\n\n    if (!s) {\n      return;\n    }\n\n    if (\n      BK_NEGATIV.test(s) ||\n      /offen|unklar|fehlt/i.test(bezeichnung)\n    ) {\n      offen.push(\n        bezeichnung + ': ' +\n        kurz(s, limit)\n      );\n    }\n  }\n\n  offenerPunkt(\n    'Offene Recherchepunkte',\n    a.m3a_offene_recherchepunkte,\n    500\n  );\n\n  offenerPunkt(\n    'Offene Punkte laut Website',\n    a.m3b_offene_punkte,\n    400\n  );\n\n  offenerPunkt(\n    'Fehlende Angaben laut M4',\n    a.m4_fehlende_angaben,\n    400\n  );\n\n  offenerPunkt(\n    'Initiativbewerbung moeglich',\n    a.m3b_initiativbewerbung_moeglich,\n    60\n  );\n\n  for (const x of basis.offen) {\n    offen.push(x);\n  }\n\n  const analysen = bewertungen.join('\\n');\n  const unbekannt = offen.join('\\n');\n\n  const hatVorgaben =\n    alt &&\n    c(alt.lernwert) !== '' &&\n    c(alt.quellen) !== '';\n\n  const p = [];\n\n  p.push(\n    'Du bist Jeromes persoenlicher Bewerbungsberater. Ihr sitzt zusammen und geht eine Firma durch, bei der er sich initiativ bewerben koennte.'\n  );\n\n  p.push('');\n\n  p.push(\n    'D) JEROME_PROFIL - das sind JEROMES Erfahrungen, NICHT die der Firma'\n  );\n\n  p.push(\n    'Quereinsteiger mit Vertriebs-, Kundenkommunikations- und Fuehrungserfahrung, Weiterbildungen in Content-/Social-Media-Management (KI im Marketing) und Digital Sales, eigene Projekte mit KI und n8n.'\n  );\n\n  p.push(\n    \"AKTUALISIERTES ZIEL (November 2026): Jerome sucht eine Remote-Festanstellung als Digital-Marketing-Allrounder (E-Commerce, KI und Automatisierung als Zusatz) in einem erfahrenen Team, in dem er von Kollegen lernt. Er bringt Vertrieb, Kundenkommunikation und Fuehrungserfahrung mit. Er arbeitet nur im Homeoffice: \\\"Remote/Homeoffice moeglich\\\" oder keine Angabe ist KEIN Nachteil; nur eine ausdrueckliche Praesenzpflicht ist ein Ausschluss. Wo die folgenden Regeln von Full-Service- oder Automation-Agenturen sprechen, gilt dieses Ziel vorrangig: Digital-Marketing- und E-Commerce-Agenturen sind ausdruecklich passend, KI/Automation ist ein Pluspunkt, kein Muss.\"\n  );\n\n  p.push(\n    'Erklaere jeden Jobtitel und jeden Fachbegriff (z. B. SEA, Performance Marketing, CRM, Account Manager) in einfachen Worten: was man dort konkret den ganzen Tag macht.'\n  );\n\n  p.push(\n    'Sag am Ende klar, ob die Firma zu Jerome passt und warum - und was zu Homeoffice auf der Seite steht oder dass dazu nichts steht.'\n  );\n\n  p.push(\n    'Er kennt die Branche und viele Fachbegriffe noch NICHT. Nenne sie korrekt, aber erklaere sie sofort nebenbei im Satz, so wie man das im Gespraech tut.'\n  );\n\n  p.push(\n    'Es gibt KEINE ausgeschriebene Stelle.'\n  );\n\n  p.push('');\n\n  p.push(\n    'ACHTUNG, haeufigster Fehler: n8n, Make, Zapier, No-Code und Low-Code sind JEROMES Werkzeuge.'\n  );\n\n  p.push(\n    'Du darfst sie der Firma NIEMALS zuschreiben, auch nicht andeutungsweise, solange sie nicht unter A) FIRMENFAKTEN stehen.'\n  );\n\n  p.push(\n    'Erlaubt ist nur die Richtung Jerome zur Firma, etwa: er koennte seine Erfahrung mit n8n dort einbringen.'\n  );\n\n  p.push(\n    'Verboten ist jede Formulierung, die behauptet oder nahelegt, die Firma arbeite damit.'\n  );\n\n  p.push('');\n\n  p.push(\n    'SO MUSST DU MIT DEN DATEN UMGEHEN - das ist die wichtigste Regel'\n  );\n\n  p.push(\n    'Die Angaben unten sind in vier Bereiche getrennt. Halte dich strikt daran:'\n  );\n\n  p.push(\n    'A) FIRMENFAKTEN sind positiv belegt. Nur diese darfst du als Tatsache ueber die Firma formulieren. Nutze sie so vollstaendig wie moeglich.'\n  );\n\n  p.push(\n    'B) ANALYSEN_UND_BEWERTUNGEN sind unsere eigenen Einschaetzungen. Du darfst sie fuer die Beratung verwenden, aber NICHT als Tatsache ueber die Firma ausgeben.'\n  );\n\n  p.push(\n    'C) UNBEKANNT_ODER_NICHT_BELEGT ist ausdruecklich offen. Behaupte davon NIE das Gegenteil. Mach daraus hoechstens eine Frage fuers Gespraech.'\n  );\n\n  p.push(\n    'D) JEROME_PROFIL gehoert Jerome, nicht der Firma.'\n  );\n\n  p.push('');\n\n  p.push(\n    'Drei Ebenen fuer jede Aussage ueber die Firma:'\n  );\n\n  p.push(\n    'BELEGT - steht unter A. Formuliere es als Tatsache.'\n  );\n\n  p.push(\n    'ABLEITUNG - folgt nachvollziehbar aus A, ist aber selbst nicht belegt. Kennzeichnung ist Pflicht, siehe naechster Abschnitt.'\n  );\n\n  p.push(\n    'NICHT BELEGT - steht nirgends unter A. Dann laesst du es weg oder machst eine Frage daraus. Erfinde nichts.'\n  );\n\n  p.push(\n    'Erfinde insbesondere keine Technologien, Werkzeuge, Frameworks, Arbeitsweisen, Prozesse, Projektmethoden, Teamstrukturen, Rollen, Kundennamen, Projekte oder Referenzen.'\n  );\n\n  p.push(\n    'Gegenprobe vor dem Antworten: Streiche jede konkrete Angabe ueber die Firma, die du nicht unter A wiederfindest.'\n  );\n\n  p.push('');\n\n  p.push(\n    'ABLEITUNGEN SIND ERWUENSCHT - aber nur gekennzeichnet:'\n  );\n\n  p.push(\n    'Ueber Jeromes moegliche kuenftige Arbeit darfst und sollst du sprechen. Es gibt dafuer genau eine Bedingung:'\n  );\n\n  p.push(\n    'JEDER Satz, der von Jeromes moeglicher Arbeit, seinen moeglichen Aufgaben oder einem moeglichen Arbeitsalltag handelt, MUSS mindestens eines dieser Woerter enthalten:'\n  );\n\n  p.push(\n    'koennte, koenntest, wuerde, wuerdest, waere, duerfte, muesste, haettest, wahrscheinlich, vermutlich, moeglicherweise, denkbar, naheliegend, voraussichtlich, vorstellbar.'\n  );\n\n  p.push(\n    'Richtig: \"Denkbar waere, dass du dort Dokumentenstrecken automatisierst.\" oder \"Du koenntest deine n8n-Erfahrung in solche Prozesse einbringen.\"'\n  );\n\n  p.push(\n    'Falsch: \"Du baust dort Workflows.\" \"Du lernst dabei X.\" \"Dein Alltag ist sehr praktisch.\"'\n  );\n\n  p.push(\n    'Verboten bleiben ausserdem, auch mit Kennzeichen: \"dein Alltag ist\", \"dein Alltag sieht\", \"fuer dich sieht der Tag\", \"du musst\", \"du wirst\", \"deine Aufgabe ist\".'\n  );\n\n  p.push(\n    'Behaupte nie, welche Faehigkeiten die Firma konkret sucht, solange das nicht unter A belegt ist.'\n  );\n\n  if (!rolleBelegt) {\n    p.push(\n      'Fuer DIESE Firma ist keine Stelle belegt. Es gibt also keine einzige belegte Aufgabe. Alles dazu ist Ableitung und braucht ein Kennzeichen.'\n    );\n  }\n\n  p.push('');\n\n  p.push(\n    'KEINE AUSSAGEN UEBER JEROMES KENNTNISSTAND:'\n  );\n\n  p.push(\n    'Behaupte nie, wie viel oder wie wenig Erfahrung Jerome mit einer Technologie hat. Unter D stehen seine Schwerpunkte, mehr ist nicht belegt.'\n  );\n\n  p.push(\n    'Wendungen wie \"da hast du noch wenig Erfahrung\" oder \"das kennst du noch nicht\" sind verboten.'\n  );\n\n  p.push('');\n\n  p.push(\n    'KEINE VERGLEICHE UND KEINE SUPERLATIVE:'\n  );\n\n  p.push(\n    'Verboten ist JEDE Formulierung, die diese Firma mit anderen vergleicht oder als besonders herausstellt. Dazu gehoeren: kaum anderswo, kaum woanders, in dieser Form kaum, nirgends sonst, einzigartig, einmalig, besser als anderswo, wie an kaum einem anderen Ort, das findest du sonst nicht. Es liegen keine Daten ueber andere Firmen vor. Begruende die Empfehlung ausschliesslich mit dem, was unter A ueber DIESE Firma steht.'\n  );\n\n  p.push('');\n\n  p.push(\n    'REMOTE - fuer Jerome zentral:'\n  );\n\n  p.push(\n    'Jerome sucht ausdruecklich eine Stelle im Homeoffice. Steht unter A nicht, dass vollstaendig remote gearbeitet werden kann, stelle den Standort NICHT als Vorteil dar.'\n  );\n\n  p.push(\n    'Benenne dann ausdruecklich als offenen Punkt fuers Gespraech, ob die Zusammenarbeit vollstaendig remote moeglich ist.'\n  );\n\n  p.push('');\n\n  p.push(\n    'A) FIRMENFAKTEN - positiv belegt'\n  );\n\n  p.push(firmenfakten);\n\n  if (analysen) {\n    p.push('');\n    p.push(\n      'B) ANALYSEN_UND_BEWERTUNGEN - unsere Einschaetzung, kein Firmenfakt'\n    );\n    p.push(analysen);\n  }\n\n  if (unbekannt) {\n    p.push('');\n    p.push(\n      'C) UNBEKANNT_ODER_NICHT_BELEGT - hierueber keine Behauptungen'\n    );\n    p.push(unbekannt);\n  }\n\n  p.push('');\n\n  if (hatVorgaben) {\n    p.push(\n      'FESTE VORGABEN - unveraendert uebernehmen, NICHT neu recherchieren'\n    );\n\n    p.push(\n      'lernwert: ' +\n      c(alt.lernwert) +\n      '  builder_anteil: ' +\n      c(alt.builder_anteil) +\n      '  zukunftswert: ' +\n      c(alt.zukunftswert)\n    );\n\n    p.push(\n      'empfehlung: ' +\n      c(alt.empfehlung)\n    );\n\n    p.push(\n      'quellen (genau diese, gleiche Titel und URLs): ' +\n      c(alt.quellen)\n    );\n\n    p.push(\n      'Diese Werte stehen fest. Deine Aufgabe ist ausschliesslich der neue Beratertext.'\n    );\n\n    p.push(\n      'Inhaltlich beziehst du dich AUSSCHLIESSLICH auf A, B und C. Frueher erzeugte Beratertexte liegen dir bewusst nicht vor.'\n    );\n\n    p.push('');\n  }\n\n  p.push(\n    'SO SOLL DER TEXT KLINGEN'\n  );\n\n  p.push(\n    'Wie ein echtes Gespraech unter vier Augen: direkt, verstaendlich, ehrlich und konkret. Zusammenhaengender Fliesstext.'\n  );\n\n  p.push('');\n\n  p.push(\n    'SPRACHREGELN - diese sind verbindlich:'\n  );\n\n  p.push(\n    '1. Der Text ist DURCHGEHEND an Jerome gerichtet. Immer \"du\" und \"dich\". Kein einziger Satz darf ins Allgemeine kippen. Verboten sind Wendungen wie \"fuer alle, die\", \"man\", \"wer das mag\", \"jeder, der\".'\n  );\n\n  p.push(\n    '2. Schreibe grammatikalisch sauberes, natuerliches gesprochenes Deutsch. Lies jeden Satz vor dem Antworten noch einmal. Kein Wort darf an der falschen Stelle stehen. Falsch waere zum Beispiel \"du baust wahrscheinliche Workflows\" - richtig ist \"du baust wahrscheinlich Workflows\".'\n  );\n\n  p.push(\n    '3. Lieber ein einfacher sauberer Satz als eine kunstvoll wirkende Formulierung.'\n  );\n\n  p.push(\n    '4. Keine Jugendsprache, keine aufgesetzte Lockerheit, keine Fuellwoerter wie \"total\", \"mega\", \"voll\", \"echt stark\", \"richtig geil\".'\n  );\n\n  p.push(\n    '5. Das Wort \"trotzdem\" und aehnliche Einschraenkungen wie \"dennoch\" oder \"nichtsdestotrotz\" nur, wenn unmittelbar davor ein wirklich gewichtiger Nachteil steht. Eine klare Empfehlung darf nicht kuenstlich relativiert werden.'\n  );\n\n  p.push(\n    '6. Keine Listen, keine Aufzaehlungszeichen, keine Ueberschriften, keine Kategorienamen wie \"Lernwert:\" oder \"Risiken:\" im Text.'\n  );\n\n  p.push(\n    '7. Keine Berichtssprache und keine Consultant-Floskeln.'\n  );\n\n  p.push('');\n\n  p.push(\n    'DER SCHLUSS - hier wird am haeufigsten gepatzt, halte dich genau daran:'\n  );\n\n  p.push(\n    'a) Der Text endet IMMER mit einer klaren persoenlichen Empfehlung. Sag ausdruecklich, ob du die Bewerbung freigeben wuerdest. Zum Beispiel: \"Ich wuerde die Bewerbung freigeben, weil ...\" Eine blosse Beschreibung als Schluss reicht nicht.'\n  );\n\n  p.push(\n    'b) Die Begruendung muss sich ausdruecklich auf DIESE Firma beziehen. Nenne den Firmennamen und ein konkretes Detail, das unter A steht - eine Technologie, eine Kundenart, ein Projekt, ein Anwendungsbeispiel. Behaupte dabei NICHT, dass es das nur hier gibt.'\n  );\n\n  p.push(\n    'c) Mache den Gegentest: Wenn dein Schlusssatz auch bei einer beliebigen anderen Automatisierungsagentur passen wuerde, ist er falsch. Schreib ihn dann neu - mit einem Detail aus A.'\n  );\n\n  p.push(\n    'Ein schlechter Schluss waere: \"Fuer dich waere das die Art von Firma, bei der du praktisches KI-Bauen lernen kannst.\" Der passt ueberall.'\n  );\n\n  p.push('');\n\n  p.push(\n    'AUFBAU'\n  );\n\n  p.push(\n    'Steig mit deiner Einschaetzung ein, nicht mit einer Firmenbeschreibung. Zum Beispiel: \"X wuerde ich fuer dich klar auf sehr interessant setzen.\"'\n  );\n\n  p.push(\n    'Dann beilaeufig: was die Firma laut A macht und fuer wen, welche Aufgaben dort fuer dich denkbar waeren, wie ein moeglicher Arbeitsalltag aussehen koennte, warum das zu deinen Zielen passt, was du dort lernen koenntest.'\n  );\n\n  p.push(\n    'Die Firmenseite ist Tatsache, deine Seite ist Ableitung. Halte diese beiden Ebenen sprachlich auseinander.'\n  );\n\n  p.push(\n    'Nenne mindestens ein konkretes Beispiel aus A. Diese Beispiele sind wichtig, lass sie nicht weg.'\n  );\n\n  p.push(\n    'Dann der echte Haken, ehrlich benannt, und was er im Gespraech konkret nachfragen sollte.'\n  );\n\n  p.push(\n    'Zum Schluss die Empfehlung nach den Regeln a bis c.'\n  );\n\n  p.push(\n    'Absaetze sind erlaubt, Ueberschriften nicht.'\n  );\n\n  p.push('');\n\n  p.push(\n    'Die zusaetzliche Laenge muss aus den Angaben unter A und B kommen, nicht aus Wiederholung oder allgemeinen Saetzen.'\n  );\n\n  p.push(\n    'Erklaere die Fachbegriffe dieser Firma so, dass Jerome versteht, was sie fuer eine moegliche kuenftige Arbeit und fuer seinen Lernweg bedeuten koennten.'\n  );\n\n  p.push(\n    'Ein Satz, der auch bei jeder anderen Automatisierungsagentur stimmen wuerde, gehoert gestrichen.'\n  );\n\n  p.push(\n    'FORM: keine URLs, kein http, kein www, keine Markdown-Links, keine Quellenverweise im Text. Quellen nur im Feld quellen.'\n  );\n\n  p.push('');\n\n  p.push(\n    'Antworte AUSSCHLIESSLICH mit diesem JSON, ohne Vorrede, ohne Markdown, und gib es nur EINMAL aus:'\n  );\n\n  p.push(\n    '{\"berater_text\":\"\",\"berater_kurzfazit\":\"\",\"firma_macht_konkret\":\"\",\"wahrscheinliche_aufgaben\":\"\",\"arbeitsalltag\":\"\",\"lernwert\":0,\"builder_anteil\":0,\"zukunftswert\":0,\"risiken\":\"\",\"empfehlung\":\"INTERESSANT\",\"quellen\":[{\"titel\":\"\",\"url\":\"\"}]}'\n  );\n\n  p.push(\n    'berater_kurzfazit: ein Satz, hoechstens 160 Zeichen, ohne URL. Die uebrigen Textfelder je hoechstens 400 Zeichen, stichwortartig, fuer eine spaetere Webanwendung.'\n  );\n\n  p.push(\n    'firma_macht_konkret: nur Belegtes aus A.'\n  );\n\n  p.push(\n    'wahrscheinliche_aufgaben und arbeitsalltag: Ableitungen. Jeder Satz darin braucht eines der oben genannten Kennzeichen. Gibt A dafuer nichts her, schreibe genau: Nicht belegt.'\n  );\n\n  p.push(\n    'empfehlung ist genau einer von: SEHR_INTERESSANT, INTERESSANT, MIT_VORBEHALT, NICHT_PRIORISIEREN.'\n  );\n\n  if (!hatVorgaben) {\n    p.push(\n      'lernwert, builder_anteil, zukunftswert je 0 bis 10. Nenne als Quellen ausschliesslich Seiten, die unter A als Webseite genannt sind, mit vollstaendiger URL in reinem ASCII. Recherchiere nicht im Web.'\n    );\n  }\n\n  p.push('');\n\n  p.push(\n    'WICHTIG - AUSGABELAENGE:'\n  );\n\n  p.push(\n    'Das Feld berater_text allein muss zwischen 250 und 350 Woerter enthalten. Das Kurzfazit zaehlt NICHT mit.'\n  );\n\n  p.push(\n    'Beende den Text vollstaendig.'\n  );\n\n  p.push(\n    'Keinen Abschnitt abbrechen.'\n  );\n\n  p.push(\n    'Ziele auf ungefaehr 290 bis 310 Woerter.'\n  );\n\n  p.push(\n    'Die Wahrheitsregeln dieses Prompts haben trotzdem immer Vorrang: Erfinde niemals Inhalte, nur um die Wortzahl zu erreichen.'\n  );\n\n  auftraege.push({\n    json: {\n      stellen_id: id,\n      firma,\n      _prompt: p.join('\\n'),\n      _hat_kandidat: true\n    }\n  });\n}\n\n// TESTLIMIT = 0 => ALLE offenen Auftraege.\nconst gewaehlt =\n  TESTLIMIT > 0\n    ? auftraege.slice(0, TESTLIMIT)\n    : auftraege;\n\nif (!gewaehlt.length) {\n  return [{\n    json: {\n      _hat_kandidat: false,\n      _uebersprungen: uebersprungen,\n      _grund: 'Keine Agentur offen.'\n    }\n  }];\n}\n\nreturn gewaehlt;"
+      },
+      "id": "cb7640f2-29c7-4dee-9618-5f486518c078",
+      "name": "Kandidaten und Prompt bauen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        144
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json._hat_kandidat }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "ba6e5fdd-a422-486e-8fa1-f8acf382a5b3",
+      "name": "Offene Agenturen vorhanden?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1344,
+        144
+      ]
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-5.6-luna",
+          "mode": "id"
+        },
+        "responses": {
+          "values": [
+            {
+              "content": "={{ $json._prompt }}"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "id": "01128e64-299f-42d0-992e-ef19b49ff640",
+      "name": "Beratung mit GPT-5.6 Luna erstellen",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.3,
+      "position": [
+        1568,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "id": "2e332cb7-38fe-46ea-b5e8-15aad07ebb28",
+      "name": "Agentur und Beratung verbinden",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1792,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const ein = $input.first() ? ($input.first().json || {}) : {};\nreturn [{ json: {\n  workflow: 'M6 - Berater',\n  status: 'NICHTS_ZU_TUN',\n  grund: ein._grund || 'Keine offenen Agenturen.',\n  uebersprungen: ein._uebersprungen || [],\n  gpt_aufrufe: 0,\n  ausgefuehrt_am: new Date().toISOString()\n} }];"
+      },
+      "id": "0cf12ebd-9906-4e09-b8f5-797db8019a9b",
+      "name": "Zusammenfassung ohne offene Agenturen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1568,
+        288
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prueft die Beratung: Wortzahl, Gespraechston, Linkfreiheit, Bewertungen, Quellen.\n// Es wird NICHT still gekuerzt. Verstoesse werden sichtbar als UNSICHER markiert.\n// Baut zusaetzlich chatgpt_json fuer die spaetere Webanwendung. Rein deterministisch\n// aus den bereits geprueften Feldern, ohne zusaetzlichen GPT-Aufruf.\n// Sonderzeichen stehen absichtlich als \\uXXXX-Escapes, damit der Code beim\n// Uebertragen nicht still veraendert werden kann.\n// Die Belegbasis kommt aus bkBelegbasis() - derselben Funktion, aus der auch\n// Bereich A des Prompts gebaut wird. Was der Berater als Tatsache sehen durfte,\n// zaehlt hier als Beleg. Nichts anderes.\n\n// ===================== BELEG-KERN v1 =====================\n// Einzige Quelle der Wahrheit fuer Datenreinigung, Belegbasis und Ableitungsregeln.\n// Dieser Block wird von baue.js WOERTLICH in beide Code-Knoten eingesetzt:\n//   \"Kandidaten und Prompt bauen\"  und  \"Beratung auswerten\".\n// Aenderungen ausschliesslich hier vornehmen, danach baue.js laufen lassen.\n// preflight.js prueft, dass beide Knoten denselben Block enthalten.\n\n// Modelle und Tabellen liefern Umlaute teilweise zerlegt (o + U+0308 statt oe).\n// Ohne Normalisierung trifft kein Muster mit Umlaut - \"koenntest\" wird erkannt,\n// \"könntest\" nicht. Deshalb wird JEDER Text zuerst nach NFC zusammengezogen.\nfunction bkNfc(v) {\n  var s = String(v == null ? '' : v);\n  try { return s.normalize('NFC'); } catch (e) { return s; }\n}\n\nfunction bkText(v) {\n  return bkNfc(v).replace(/ /g, ' ').replace(/\\s+/g, ' ').trim();\n}\n\n// ---- Analyse- und Meta-Etiketten -----------------------------------------\n// Diese Etiketten stehen in den M3-Feldern und leiten unsere EIGENE Bewertung\n// oder eine Recherchenotiz ein - keinen Firmenfakt. Ab dem Etikett bis zum Ende\n// des Blocks gehoert der Text nicht mehr in die Firmenfakten.\nvar BK_ANALYSE = [\n  /Passung f(?:ü|ue)r Jerome\\s*:/i,\n  /Umsetzungsn(?:ä|ae)he laut M2\\s*:/i,\n  /laut M2\\s*:/i,\n  /laut M4\\s*:/i,\n  /aus M1KI\\s*:/i,\n  /Gr(?:ö|oe)(?:ß|ss)te Chance\\s*:/i,\n  /Gr(?:ö|oe)(?:ß|ss)tes Risiko\\s*:/i,\n  /Fachlicher Fit\\s*:/i,\n  /Lernchance\\s*:/i,\n  /Lernwert\\s*:/i,\n  /Eignung\\s*:/i,\n  // Bewerberperspektive ohne Namensnennung\n  /Ein(?:e)?\\s+Quereinsteiger\\w*/i,\n  /F(?:ü|ue)r\\s+(?:einen|eine)\\s+(?:Quereinsteiger|Einsteiger|Bewerber)\\w*/i\n];\nvar BK_META = [\n  /manuell verifiziert/i,\n  /\\d+\\s+von\\s+\\d+\\s+gepr(?:ü|ue)ften Firmenseiten/i,\n  /\\d+\\s+Unterseite\\(?n?\\)?\\s+als Catch-all/i,\n  /Quellen\\s*:\\s*https?:/i,\n  /Karriereseite vorhanden\\s*:/i,\n  /laut Datensatz\\s*:/i,\n  /Stand der Recherche\\s*:/i,\n  /Nur informativ/i\n];\n\n// ---- Navigationswortschatz ------------------------------------------------\n// Ein Segment gilt als Menue, wenn es ueberwiegend aus diesen Woertern besteht.\n// Einzelne Treffer schaden nicht - erst der Anteil entscheidet.\nvar BK_NAV_WORT = ('zum inhalt springen skip to content cookie cookies einstellungen startseite start home impressum '\n  + 'datenschutz datenschutzerklaerung agb kontakt kontaktformular menue menu navigation suchen suche login anmelden '\n  + 'leistungen referenzen kompetenzen vorgehen produkt produkte unternehmen team labor karriere blog news presse faq '\n  + 'ueber uber uns de en deutsch english sprache mehr erfahren weiterlesen jetzt hier klicken nach oben seite '\n  + 'anfragen erstberatung vorprojekt beratungsgespraech termin demo angebot prozess prozesse tools services '\n  + 'portfolio loesungen branchen partner downloads newsletter').split(' ');\nvar BK_NAV_SET = {};\nfor (var bkI = 0; bkI < BK_NAV_WORT.length; bkI++) { BK_NAV_SET[BK_NAV_WORT[bkI]] = true; }\n\nvar BK_NAV_PHRASE = /zum inhalt springen|skip to content|cookie[- ]?einstellung|cookie[- ]?hinweis|alle akzeptieren|nach oben scrollen/i;\n\n// ---- Verneinung -----------------------------------------------------------\n// Wirkt ab jetzt NUR noch auf das Segment, in dem sie steht.\nvar BK_NEGATIV = /nicht ersichtlich|nicht bekannt|nicht belegt|nicht nachweisbar|nicht gesichert|nicht dokumentiert|nicht klar|nicht vollst(?:ä|ae)ndig belegt|nichts belegt|nichts bekannt|nichts gesichert|nichts dokumentiert|l(?:ä|ae)sst sich (?:bisher |derzeit |aktuell |so )?nicht sagen|unbekannt|unklar|keine angaben|keine konkreten|keine information|bleibt offen|ist offen|fraglich/i;\n\n// ---- Ableitungskennzeichen ------------------------------------------------\n// Prompt und Pruefer benutzen exakt diese Liste. Ein Satz ueber Jeromes\n// moegliche Arbeit MUSS eines dieser Woerter enthalten.\nvar BK_ABLEITUNG = /\\b(k(?:ö|oe)nnte(?:st|n|t)?|w(?:ü|ue)rde(?:st|n|t)?|w(?:ä|ae)re(?:n|st)?|d(?:ü|ue)rfte(?:st|n)?|m(?:ü|ue)sste(?:st|n)?|h(?:ä|ae)tte(?:st|n)?|wahrscheinlich|vermutlich|m(?:ö|oe)glicherweise|denkbar|naheliegend|voraussichtlich|anzunehmen|vorstellbar|nahe liegen)\\b/i;\n\n// Formulierungen, die auch mit Kennzeichen eine Tatsache behaupten.\nvar BK_ABSOLUT = /\\bdein (?:arbeits)?alltag (?:ist|sieht|besteht)\\b|\\bf(?:ü|ue)r dich sieht der (?:tag|alltag)\\b|\\bdu musst\\b|\\bdu wirst\\b|\\bdu bist dann\\b|\\bdeine aufgabe ist\\b/i;\n\n// Taetigkeitsaussage ueber Jerome.\nvar BK_TAETIGKEIT = /\\b(?:du|dein\\w*)\\b[^.!?]{0,120}\\b(?:arbeitest|arbeiten|baust|bauen|entwickelst|entwickeln|umsetzt|umsetzen|programmierst|programmieren|testest|testen|dokumentierst|dokumentieren|betreust|betreuen|verantwortest|verantworten|einsetzt|einsetzen|anbindest|anbinden|erkennst|weiterentwickelst|lernst|mitarbeitest)\\b/i;\n\n// Belegte Rolle. \"Karriereseite\" ist ausdruecklich KEIN Rollenbeleg -\n// eine vorhandene Karriereseite sagt nichts ueber eine passende offene Stelle.\nvar BK_ROLLE = /stellenausschreibung|stellenangebot|offene stelle|ausgeschriebene stelle|position ausgeschrieben|vakanz|wir suchen (?:ab|zum|einen|eine|dich|verst(?:ä|ae)rkung)|bewirb dich|werkstudent|praktikumsplatz|junior[- ]?(?:entwickler|berater|consultant|developer)/i;\n\n// ---- Segmentierung --------------------------------------------------------\n// Rohfeld -> Bloecke (an \" | \") -> Segmente (an Satzenden und Punktketten).\nfunction bkBloecke(v) {\n  return bkText(v).split(/\\s*\\|\\s*/).map(function (s) { return s.trim(); }).filter(function (s) { return s; });\n}\n\nfunction bkSegmenteAusBlock(block) {\n  return String(block)\n    .split(/(?<=[.!?])\\s+|\\s+·\\s+|\\s+—\\s+|\\s+–\\s+|(?:\\s*\\.\\s*){2,}/)\n    .map(function (s) { return s.replace(/^[\\s.,;:·—–-]+/, '').replace(/[\\s.,;:·—–-]+$/, '').trim(); })\n    .filter(function (s) { return s; });\n}\n\nfunction bkIstNavigation(seg) {\n  var s = String(seg);\n  if (BK_NAV_PHRASE.test(s)) { return true; }\n  var w = s.toLowerCase().replace(/[^a-z0-9äöüß\\s/-]/g, ' ').split(/\\s+/).filter(function (x) { return x; });\n  if (!w.length) { return true; }\n  var nav = 0;\n  for (var i = 0; i < w.length; i++) { if (BK_NAV_SET[w[i]]) { nav++; } }\n  var anteil = nav / w.length;\n  if (anteil >= 0.7) { return true; }\n  if (w.length <= 12 && anteil >= 0.5) { return true; }\n  // Reine Ziffern- oder Zeichenfragmente aus dem Seitenaufbau.\n  if (/^[0-9\\W_]+$/.test(s)) { return true; }\n  return false;\n}\n\n// Kernfunktion. Liefert die drei Anteile eines Rohfeldes getrennt zurueck.\n//   rein    - Firmenfakten, ohne Navigation, ohne Analyse, ohne Meta, ohne Verneinung\n//   analyse - unsere eigene Bewertung (gehoert nach B)\n//   meta    - Recherchenotizen (gehoeren nirgendwohin)\n//   offen   - Segmente mit ausdruecklicher Verneinung (gehoeren nach C)\n//   nav     - verworfene Menuesegmente, nur zur Messung\nfunction bkTrenne(v) {\n  var rein = [], analyse = [], meta = [], offen = [], nav = [];\n  var bloecke = bkBloecke(v);\n  for (var b = 0; b < bloecke.length; b++) {\n    var block = bloecke[b];\n    // Analyse- und Meta-Etikett schneidet den Rest des Blocks ab.\n    var schnitt = -1, artSchnitt = '';\n    for (var a = 0; a < BK_ANALYSE.length; a++) {\n      var m = block.match(BK_ANALYSE[a]);\n      if (m && (schnitt === -1 || m.index < schnitt)) { schnitt = m.index; artSchnitt = 'analyse'; }\n    }\n    for (var t = 0; t < BK_META.length; t++) {\n      var m2 = block.match(BK_META[t]);\n      if (m2 && (schnitt === -1 || m2.index < schnitt)) { schnitt = m2.index; artSchnitt = 'meta'; }\n    }\n    var kopf = block, rest = '';\n    if (schnitt >= 0) { kopf = block.slice(0, schnitt); rest = block.slice(schnitt); }\n    if (rest) { (artSchnitt === 'meta' ? meta : analyse).push(rest.trim()); }\n\n    var segs = bkSegmenteAusBlock(kopf);\n    // Der Schnitt kann einen angefangenen Satz hinterlassen (\"Sitz\" aus\n    // \"Sitz laut Datensatz: Koeln\"). Ein solcher Rest ist kein Firmenfakt.\n    if (schnitt >= 0 && segs.length) {\n      var letzt = segs[segs.length - 1].split(/\\s+/).filter(function (x) { return x; });\n      if (letzt.length <= 2) { segs.pop(); }\n    }\n    for (var s = 0; s < segs.length; s++) {\n      var seg = segs[s];\n      if (bkIstNavigation(seg)) { nav.push(seg); continue; }\n      if (BK_NEGATIV.test(seg)) { offen.push(seg); continue; }\n      rein.push(seg);\n    }\n  }\n  return { rein: bkEindeutig(rein), analyse: bkEindeutig(analyse), meta: bkEindeutig(meta), offen: bkEindeutig(offen), nav: nav };\n}\n\n// Wiederholungen entfernen. Ersetzt die alte Eindeutigkeitsquote.\nfunction bkEindeutig(liste) {\n  var gesehen = {}, out = [];\n  for (var i = 0; i < liste.length; i++) {\n    var k = liste[i].toLowerCase().replace(/[^a-z0-9äöüß]/g, '');\n    if (!k || gesehen[k]) { continue; }\n    gesehen[k] = true;\n    out.push(liste[i]);\n  }\n  return out;\n}\n\n// Gereinigter Fliesstext eines Feldes.\nfunction bkSauber(v) { return bkTrenne(v).rein.join('. '); }\n\n// ---- Feldlisten -----------------------------------------------------------\n// EINE Liste fuer Bereich A und fuer die Belegbasis des Pruefers.\n// Aendert sich hier etwas, aendert es sich fuer beide gleichzeitig.\nvar BK_FIRMENFELDER = [\n  ['Rechtlicher Firmenname', 'm3b_rechtlicher_firmenname', 200],\n  ['Firmenkern', 'm3a_firmenkern', 1600],\n  ['Angebotene Leistungen', 'm3a_angebotene_leistungen', 1200],\n  ['Leistungen laut Website', 'm3b_leistungen', 1600],\n  ['Automatisierungsfokus', 'm3a_automatisierungsfokus', 600],\n  ['Kundennutzen', 'm3a_kundennutzen', 500],\n  ['Umsetzungsbelege', 'm3a_umsetzungsbelege', 400],\n  ['Umsetzungsbelege laut Website', 'm3b_umsetzungsbelege', 400],\n  ['Projekte und Referenzen', 'm3b_projekte_referenzen', 1600],\n  ['Anknuepfungspunkte', 'm3b_anknuepfungspunkte', 400],\n  ['Hinweis zum Team', 'm3b_team_hinweis', 300],\n  ['Technologien laut M3A', 'm3a_technologien', 400],\n  ['Technologien laut Website', 'm3b_technologien', 400]\n];\n\n// Baut Firmenfakten, Belegtext und offene Punkte in einem Durchgang.\n// Prompt und Pruefer rufen ausschliesslich diese Funktion auf.\nfunction bkBelegbasis(a) {\n  var fakten = [], belegTeile = [], offen = [], analyse = [], verworfen = [];\n  var gesehen = {};\n  for (var i = 0; i < BK_FIRMENFELDER.length; i++) {\n    var bez = BK_FIRMENFELDER[i][0], feld = BK_FIRMENFELDER[i][1], limit = BK_FIRMENFELDER[i][2];\n    var teil = bkTrenne(a ? a[feld] : '');\n    for (var x = 0; x < teil.analyse.length; x++) { analyse.push(teil.analyse[x]); }\n    for (var y = 0; y < teil.offen.length; y++) { offen.push(bez + ': ' + teil.offen[y]); }\n    if (teil.nav.length) { verworfen.push(bez + ': ' + teil.nav.length + ' Menuesegment(e)'); }\n    if (!teil.rein.length) { continue; }\n    // Doppelte Segmente ueber Feldgrenzen hinweg nur einmal aufnehmen.\n    var neu = [];\n    for (var z = 0; z < teil.rein.length; z++) {\n      var k = teil.rein[z].toLowerCase().replace(/[^a-z0-9äöüß]/g, '');\n      if (gesehen[k]) { continue; }\n      gesehen[k] = true;\n      neu.push(teil.rein[z]);\n    }\n    if (!neu.length) { continue; }\n    var text = neu.join('. ');\n    if (text.length > limit) { text = text.slice(0, limit) + ' ...'; }\n    fakten.push(bez + ': ' + text);\n    belegTeile.push(text);\n  }\n  return {\n    fakten: fakten,\n    belegText: belegTeile.join(' ').toLowerCase(),\n    offen: bkEindeutig(offen),\n    analyse: bkEindeutig(analyse),\n    verworfen: verworfen\n  };\n}\n\n// Ist eine Rolle bei dieser Firma belegt? Geprueft wird ausschliesslich der\n// gereinigte Belegtext, damit Recherchenotizen nichts ausloesen koennen.\nfunction bkRolleBelegt(belegText) { return BK_ROLLE.test(bkNfc(belegText)); }\n\n// Eine Frage oder ein offener Punkt ist keine Behauptung. \"Ob du remote\n// arbeiten kannst, solltest du nachfragen\" ist kein Verstoss.\nvar BK_FRAGE = /\\bob\\b|\\?|nachfragen|nachhaken|kl(?:ä|ae)ren|offene(?:r|s)? (?:punkt|frage)/i;\n\n// Saetze eines Textes.\nfunction bkSaetze(text) {\n  return bkNfc(text).split(/(?<=[.!?])\\s+/).map(function (s) { return s.trim(); }).filter(function (s) { return s; });\n}\n\n// Eine Aussage ueber Jeromes moegliche Arbeit ist zulaessig, wenn der Satz ein\n// Ableitungskennzeichen traegt und keine absolute Wendung enthaelt.\nfunction bkAbleitungOk(roh) {\n  var satz = bkNfc(roh);\n  if (BK_ABSOLUT.test(satz)) { return false; }\n  return BK_ABLEITUNG.test(satz);\n}\n\n// Nebensaetze wie \"ohne dass du programmieren musst\" beschreiben eine\n// Eigenschaft des Werkzeugs, keine Taetigkeit Jeromes bei dieser Firma.\nvar BK_NEBENSATZ = /\\bohne (?:dass |zu )|\\bstatt dass du\\b|\\bsodass du nicht\\b|\\bdamit du nicht\\b/i;\n\n// Solche Nebensaetze aus dem Satz nehmen, bevor auf Taetigkeit geprueft wird.\nfunction bkOhneNebensaetze(satz) {\n  return String(satz).split(/[,;–—]| aber | jedoch | sondern /i)\n    .filter(function (t) { return !BK_NEBENSATZ.test(t); }).join(' ');\n}\n\n// Verstoss gegen die Ableitungsregel: der Satz behauptet eine Taetigkeit,\n// ist keine Frage und kein offener Punkt - und traegt trotzdem kein Kennzeichen.\n// Prompt-Regel und Prueferregel sind damit dieselbe Regel.\nfunction bkTaetigkeitsverstoss(roh) {\n  var s = bkNfc(roh);\n  if (BK_ABSOLUT.test(s)) { return false; }\n  if (BK_NEGATIV.test(s) || BK_FRAGE.test(s)) { return false; }\n  if (!BK_TAETIGKEIT.test(bkOhneNebensaetze(s))) { return false; }\n  return !BK_ABLEITUNG.test(s);\n}\n\n// ---- Erklaerung ist keine Zuschreibung ------------------------------------\n// \"On-Premise bedeutet, dass die Loesung im Unternehmen laeuft und nicht in der\n// Cloud\" erklaert einen Fachbegriff. Es behauptet nichts ueber DIESE Firma.\n// Sobald sich der Satz auf die Firma bezieht, gilt die Ausnahme nicht mehr.\nvar BK_ERKLAERUNG = /\\bbedeutet\\b|\\bbedeuten\\b|\\bhei(?:ß|ss)t\\b|\\bd\\.h\\.|\\bsprich\\b|\\bgemeint ist\\b|\\bversteht man\\b|\\bnennt man\\b|(?:ä|ae)hnlich|vergleichbar|so wie|wie zum beispiel|zum beispiel|etwa wie|analog zu/i;\nvar BK_FIRMENBEZUG = /\\bhier\\b|\\bdort\\b|\\bbei ihnen\\b|\\bbei denen\\b|\\bin diesem fall\\b|\\bin ihrem fall\\b/i;\n\nfunction bkIstErklaerung(roh, firma) {\n  var s = bkNfc(roh);\n  if (!BK_ERKLAERUNG.test(s)) { return false; }\n  if (BK_FIRMENBEZUG.test(s)) { return false; }\n  var f = bkNfc(firma).trim().toLowerCase();\n  if (f && s.toLowerCase().indexOf(f) !== -1) { return false; }\n  return true;\n}\n\n// ---- JSON aus einer Modellantwort -----------------------------------------\n// Steht in beiden Knoten, die eine Modellantwort lesen (\"Laenge pruefen\" und\n// \"Beratung auswerten\"). Vorher hatte jeder Knoten seine eigene Fassung - der\n// Laengenknoten konnte eine Antwort mit echtem Zeilenumbruch nicht lesen und\n// hat die Laengenkorrektur stillschweigend uebersprungen.\nfunction bkAlleJson(t) {\n  var gefunden = [];\n  var i = 0;\n  while (true) {\n    var a = t.indexOf('{', i);\n    if (a === -1) { break; }\n    var tiefe = 0, imText = false, esc = false, ende = -1;\n    for (var k = a; k < t.length; k++) {\n      var ch = t[k];\n      if (esc) { esc = false; continue; }\n      if (ch === '\\\\') { if (imText) { esc = true; } continue; }\n      if (ch === '\"') { imText = !imText; continue; }\n      if (imText) { continue; }\n      if (ch === '{') { tiefe++; }\n      else if (ch === '}') { tiefe--; if (tiefe === 0) { ende = k; break; } }\n    }\n    if (ende === -1) { break; }\n    gefunden.push(t.slice(a, ende + 1));\n    i = ende + 1;\n  }\n  return gefunden;\n}\n\n// GPT setzt Absaetze als echten Zeilenumbruch mitten in den JSON-String.\n// JSON.parse bricht dann ab. Steuerzeichen INNERHALB von Zeichenketten werden\n// deshalb nachtraeglich escaped. Ausserhalb bleibt alles unveraendert.\nfunction bkSteuerzeichen(roh) {\n  var out = '', imText = false, esc = false;\n  for (var i = 0; i < roh.length; i++) {\n    var ch = roh[i], code = roh.charCodeAt(i);\n    if (esc) { out += ch; esc = false; continue; }\n    if (ch === '\\\\') { out += ch; if (imText) { esc = true; } continue; }\n    if (ch === '\"') { imText = !imText; out += ch; continue; }\n    if (imText && code < 32) {\n      out += (ch === '\\n' ? '\\\\n' : ch === '\\r' ? '\\\\r' : ch === '\\t' ? '\\\\t' : ' ');\n      continue;\n    }\n    out += ch;\n  }\n  return out;\n}\n\n// Liefert das zusammengefuehrte Antwortobjekt oder null.\nfunction bkJsonParse(t) {\n  if (t && typeof t === 'object') { return t; }\n  if (typeof t !== 'string') { return null; }\n  var ziel = {}, etwas = false;\n  var liste = bkAlleJson(t);\n  for (var i = 0; i < liste.length; i++) {\n    var o = null;\n    try { o = JSON.parse(liste[i]); }\n    catch (e) {\n      try { o = JSON.parse(bkSteuerzeichen(liste[i])); } catch (e2) { continue; }\n    }\n    if (!o || typeof o !== 'object' || Array.isArray(o)) { continue; }\n    etwas = true;\n    var keys = Object.keys(o);\n    for (var k = 0; k < keys.length; k++) {\n      var key = keys[k], alt = ziel[key], neu = o[key];\n      var leer = alt === undefined || alt === '' || (Array.isArray(alt) && alt.length === 0);\n      if (leer && neu !== undefined && neu !== '') { ziel[key] = neu; }\n    }\n  }\n  return etwas && ziel.berater_text !== undefined ? ziel : null;\n}\n\n// Rohtext aus einer n8n-OpenAI-Antwort holen. Ebenfalls in beiden Knoten gleich.\nfunction bkRohtext(row) {\n  var g = [];\n  function add(v) {\n    if (v == null || v === '') { return; }\n    if (typeof v === 'string') { var t = v.trim(); if (t) { g.push(t); } return; }\n    if (Array.isArray(v)) { for (var i = 0; i < v.length; i++) { add(v[i]); } return; }\n    if (typeof v !== 'object') { return; }\n    var felder = ['output_text', 'text', 'message', 'response', 'data', 'result', 'content'];\n    for (var f = 0; f < felder.length; f++) { if (v[felder[f]] !== undefined) { add(v[felder[f]]); } }\n    if (Array.isArray(v.output)) { for (var o = 0; o < v.output.length; o++) { add(v.output[o]); } }\n  }\n  var oben = ['output_text', 'output', 'response', 'data', 'result', 'content', 'text'];\n  for (var i = 0; i < oben.length; i++) { add(row && row[oben[i]]); }\n  add(row && row.choices && row.choices[0] && row.choices[0].message && row.choices[0].message.content);\n  if (!g.length) { return null; }\n  for (var k = 0; k < g.length; k++) {\n    if (g[k].indexOf('{') !== -1 && g[k].indexOf('berater_text') !== -1) { return g[k]; }\n  }\n  return g[g.length - 1];\n}\n\n// Wortzahl des Beratertexts einer Modellantwort. EINE Zaehlung fuer alle Knoten.\nfunction bkWortzahl(text) {\n  var t = bkNfc(text).replace(/\\s+/g, ' ').trim();\n  return t ? t.split(' ').filter(function (x) { return x; }).length : 0;\n}\n\nif (typeof module !== 'undefined' && module.exports) {\n  module.exports = {\n    bkNfc: bkNfc, bkText: bkText, bkBloecke: bkBloecke, bkSegmenteAusBlock: bkSegmenteAusBlock,\n    bkIstNavigation: bkIstNavigation, bkTrenne: bkTrenne, bkEindeutig: bkEindeutig,\n    bkSauber: bkSauber, bkBelegbasis: bkBelegbasis, bkRolleBelegt: bkRolleBelegt,\n    bkSaetze: bkSaetze, bkAbleitungOk: bkAbleitungOk, bkTaetigkeitsverstoss: bkTaetigkeitsverstoss,\n    bkIstErklaerung: bkIstErklaerung, bkOhneNebensaetze: bkOhneNebensaetze, bkAlleJson: bkAlleJson, bkSteuerzeichen: bkSteuerzeichen,\n    bkJsonParse: bkJsonParse, bkRohtext: bkRohtext, bkWortzahl: bkWortzahl,\n    BK_FIRMENFELDER: BK_FIRMENFELDER, BK_ABLEITUNG: BK_ABLEITUNG, BK_ABSOLUT: BK_ABSOLUT,\n    BK_TAETIGKEIT: BK_TAETIGKEIT, BK_FRAGE: BK_FRAGE, BK_NEGATIV: BK_NEGATIV, BK_ROLLE: BK_ROLLE,\n    BK_ERKLAERUNG: BK_ERKLAERUNG\n  };\n}\n// =================== ENDE BELEG-KERN v1 ===================\n\nconst MIN_WOERTER = 250;\nconst MAX_WOERTER = 350;\n\n// bkNfc zieht zerlegte Umlaute zusammen. Ohne das trifft kein Muster mit Umlaut.\nfunction c(v) { return bkNfc(v).replace(/ /g, ' ').replace(/\\s+/g, ' ').trim(); }\nfunction mehrzeilig(v) { return bkNfc(v).replace(/ /g, ' ').trim(); }\nfunction woerter(s) { const t = c(s); return t ? t.split(' ').filter(Boolean).length : 0; }\n\nfunction urlNormal(u) {\n  let s = c(u);\n  const striche = ['‐', '‑', '‒', '–', '—', '―', '−'];\n  for (const x of striche) s = s.split(x).join('-');\n  s = s.split('​').join('');\n  for (const p of ['?utm_source=', '&utm_source=', '?utm_medium=', '&utm_medium=']) {\n    const i = s.indexOf(p);\n    if (i !== -1) s = s.slice(0, i);\n  }\n  return s;\n}\nfunction urlOk(u) {\n  const s = u.toLowerCase();\n  if (s.indexOf('http') !== 0) return false;\n  const host = (s.split('://')[1] || '').split('/')[0];\n  if (!host || host.indexOf('.') === -1) return false;\n  for (let i = 0; i < u.length; i++) if (u.charCodeAt(i) > 126) return false;\n  return true;\n}\n\n// Rohtext und JSON-Auswertung kommen aus dem gemeinsamen Kern, damit der\n// Laengenknoten und der Pruefer dieselbe Antwort gleich lesen.\nfunction rohtext(row) { return bkRohtext(row); }\nfunction parse(t) { return bkJsonParse(t); }\n\nfunction note(v) {\n  const n = Math.round(Number(v));\n  return Number.isFinite(n) && n >= 0 && n <= 10 ? n : null;\n}\n\n// --- chatgpt_json ----------------------------------------------------------\nconst AUFTRAG = 'Gib mir zuerst den gespeicherten berater_text verstaendlich und natuerlich wieder. '\n  + 'Inhalt und Bewertung nicht veraendern. Korrigiere beim Vorlesen hoechstens offensichtliche kleine '\n  + 'Grammatik- oder Versprecherfehler, ohne die Aussage zu veraendern. Danach stoppe und warte auf meine '\n  + 'Fragen. Stelle selbst keine Rueckfragen und biete nichts zusaetzlich an. Erzeuge keine eigene Beratung, '\n  + 'keine zusaetzlichen Empfehlungen, keine weiteren Analysen und keine neue Recherche. '\n  + 'Die uebrigen Felder dienen nur dazu, meine spaeteren Fragen fundiert beantworten zu koennen.';\n\nfunction jtxt(v) { return String(v == null ? '' : v).trim(); }\nfunction jzahl(v) { const n = Number(jtxt(v)); return Number.isFinite(n) ? n : null; }\n\nfunction quellenListe(text) {\n  const out = [];\n  for (const teil of jtxt(text).split(' | ')) {\n    const t = teil.trim();\n    if (!t) continue;\n    const i = t.lastIndexOf(' - http');\n    if (i === -1) { out.push({ titel: t, url: '' }); continue; }\n    out.push({ titel: t.slice(0, i).trim(), url: t.slice(i + 3).trim() });\n  }\n  return out;\n}\n\nconst agenturen = {};\ntry {\n  for (const i of $('Agentursuche laden').all()) {\n    const a = i.json || {};\n    const aid = jtxt(a.stellen_id);\n    if (aid) agenturen[aid] = a;\n  }\n} catch (e) { }\n\n// Belegbasis je Firma genau einmal bauen und wiederverwenden.\nconst basisNachId = {};\nfunction basisFuer(id) {\n  if (!basisNachId[id]) { basisNachId[id] = bkBelegbasis(agenturen[id] || {}); }\n  return basisNachId[id];\n}\n\nfunction chatgptJson(z) {\n  const zid = jtxt(z.stellen_id);\n  const a = agenturen[zid] || {};\n  const basis = basisFuer(zid);\n  const kontext = {};\n  if (jtxt(a.ort)) kontext.standort = jtxt(a.ort);\n  if (jtxt(a.m3b_website)) kontext.webseite = jtxt(a.m3b_website);\n  if (jtxt(a.bewerbungs_email)) kontext.bewerbungs_email = jtxt(a.bewerbungs_email);\n  // Gereinigt, damit keine Jerome- oder M2-Bewertung als Firmenangabe in die\n  // Webanwendung wandert.\n  const tech = [bkSauber(a.m3a_technologien), bkSauber(a.m3b_technologien)].filter(x => x);\n  if (tech.length) kontext.genannte_technologien = tech.join(', ');\n  const leist = bkSauber(a.m3a_angebotene_leistungen);\n  if (leist) kontext.leistungen = leist.slice(0, 900);\n  if (jtxt(a.m4_prioritaet)) kontext.eignung_prioritaet = jtxt(a.m4_prioritaet);\n\n  const daten = {\n    auftrag: AUFTRAG,\n    stellen_id: zid,\n    firma: jtxt(z.firma),\n    berater_kurzfazit: jtxt(z.berater_kurzfazit),\n    berater_text: jtxt(z.berater_text),\n    firma_macht_konkret: jtxt(z.firma_macht_konkret),\n    wahrscheinliche_aufgaben: jtxt(z.wahrscheinliche_aufgaben),\n    arbeitsalltag: jtxt(z.arbeitsalltag),\n    lernwert: jzahl(z.lernwert),\n    builder_anteil: jzahl(z.builder_anteil),\n    zukunftswert: jzahl(z.zukunftswert),\n    risiken: jtxt(z.risiken),\n    empfehlung: jtxt(z.empfehlung),\n    quellen: quellenListe(z.quellen)\n  };\n  if (Object.keys(kontext).length) daten.kontext = kontext;\n\n  const json = JSON.stringify(daten);\n\n  if (json.indexOf(String.fromCharCode(96, 96, 96)) !== -1) throw new Error('Codefence im JSON');\n  if (json.length > 45000) throw new Error('JSON zu lang fuer eine Zelle: ' + json.length);\n  const probe = JSON.parse(json);\n  if (probe.berater_text !== jtxt(z.berater_text)) throw new Error('berater_text weicht ab');\n\n  return json;\n}\n// --------------------------------------------------------------------------\n\nconst ERLAUBT = ['SEHR_INTERESSANT', 'INTERESSANT', 'MIT_VORBEHALT', 'NICHT_PRIORISIEREN'];\nconst FLOSKELN = ['lernwert:', 'risiken:', 'empfehlung:', 'builder-anteil:', 'builder_anteil:', 'zukunftswert:', 'arbeitsalltag:', 'fazit:'];\nconst jetzt = new Intl.DateTimeFormat('de-DE', { timeZone: 'Europe/Berlin', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date());\n\nconst out = [];\nfor (const it of $input.all()) {\n  const r = it.json || {};\n  const id = c(r.stellen_id), firma = c(r.firma);\n  const hinweise = [];\n  const d = parse(rohtext(r));\n\n  if (!d) {\n    out.push({ json: {\n      stellen_id: id, firma, berater_status: 'FEHLER', berater_kurzfazit: '', berater_text: '',\n      firma_macht_konkret: '', wahrscheinliche_aufgaben: '', arbeitsalltag: '',\n      lernwert: '', builder_anteil: '', zukunftswert: '', risiken: '', empfehlung: '',\n      quellen: '', berater_wortzahl: 0, berater_geprueft_am: jetzt, berater_stil: '',\n      chatgpt_json: '',\n      _hinweise: 'KI-Antwort nicht lesbar'\n    } });\n    continue;\n  }\n\n  const text = mehrzeilig(d.berater_text);\n  const anzahl = woerter(text);\n  if (!text) hinweise.push('kein Beratertext');\n  else if (anzahl > MAX_WOERTER) hinweise.push('Text zu lang: ' + anzahl + ' Woerter, erlaubt bis ' + MAX_WOERTER);\n  else if (anzahl < MIN_WOERTER) hinweise.push('Text zu kurz: ' + anzahl + ' Woerter, mindestens ' + MIN_WOERTER);\n\n  const tl = text.toLowerCase();\n  const reste = [];\n  if (text.indexOf('](') !== -1) reste.push('Markdown-Link');\n  if (tl.indexOf('http') !== -1) reste.push('URL');\n  if (tl.indexOf('www.') !== -1) reste.push('www-Adresse');\n  if (reste.length) hinweise.push('Quellenreste im Beratertext: ' + reste.join(', '));\n\n  const floskeln = FLOSKELN.filter(f => tl.indexOf(f) !== -1);\n  if (floskeln.length) hinweise.push('Berichtssprache im Text: ' + floskeln.join(', '));\n  if (text.indexOf('- ') === 0 || text.indexOf('\\n- ') !== -1 || text.indexOf('\\n* ') !== -1 || text.indexOf('\\n•') !== -1) hinweise.push('Aufzaehlungszeichen im Text');\n\n  // ---- Belegbasis. Identisch mit Bereich A des Prompts.\n  const basis = basisFuer(id);\n  const belegText = basis.belegText;\n  const saetze = bkSaetze(text);\n\n  // ---- Erfindungsschutz. Geprueft wird je Begriff, nicht je Satz.\n  const BEHAUPTUNG = /eingesetzt|genutzt|verwendet|setzt .{0,25}ein|nutzt|arbeitet mit|im einsatz|kommt .{0,25}einsatz|baut .{0,25}mit|basiert auf/i;\n  const FRAGEND = /^\\s*(ob|inwieweit|wieweit|wie genau|welche|fraglich)\\b/i;\n  const HEIKEL = [\n    ['n8n', /\\bn8n\\b/i],\n    ['Make', /\\bmake(\\.com)?\\b/i],\n    ['Zapier', /\\bzapier\\b/i],\n    ['Human-in-the-Loop', /human[- ]in[- ]the[- ]loop/i],\n    ['Kubernetes', /\\bkubernetes\\b/i],\n    ['Docker', /\\bdocker\\b/i],\n    ['LangChain', /\\blangchain\\b/i],\n    ['Power Automate', /\\bpower automate\\b/i],\n    ['Salesforce', /\\bsalesforce\\b/i],\n    ['Scrum', /\\bscrum\\b/i],\n    ['Kanban', /\\bkanban\\b/i],\n    ['Terraform', /\\bterraform\\b/i]\n  ];\n\n  // Ein Begriff schlaegt an, wenn der Text ihn der FIRMA zuschreibt.\n  // Nicht jede Nennung ist eine Zuschreibung. Drei Faelle sind ausdruecklich\n  // erlaubt und wurden im Echtlauf vom 10.08. alle drei falsch gemeldet:\n  //   1. Jeromes eigener Werkzeugkasten  (\"deine n8n-Erfahrung koenntest du ...\")\n  //   2. die offene Frage                (\"ob n8n zum Einsatz kommt, muesstest du fragen\")\n  //   3. der Erklaervergleich            (\"Make.com, aehnlich wie n8n\")\n  // Diese Ausnahmen werden am ganzen SATZ geprueft, nicht am Komma-Fragment -\n  // sonst verliert \"zum Beispiel n8n\" seinen Bezug und wird zur Erfindung.\n  // Eine ausdrueckliche Nutzungsbehauptung ohne Jerome-Bezug schlaegt immer an.\n  const EIGEN = /\\b(du|dich|dir|dein|deine|deiner|deinem|deinen)\\b/i;\n  const FRAGE = /\\bob\\b|\\?|nachfragen|nachhaken|im gespraech klaeren|im gespr(ä|ae)ch fragen/i;\n  // Erklaervergleiche erkennt bkIstErklaerung - dieselbe Regel wie beim Betriebsformennetz.\n\n  const erfunden = [];\n  for (const paar of HEIKEL) {\n    const name = paar[0];\n    const muster = paar[1];\n    if (muster.test(belegText)) { continue; }   // positiv belegt, alles erlaubt\n    let alarm = false;\n    for (const satz of saetze) {\n      if (!muster.test(satz)) { continue; }\n      const teile = satz.split(/[,;]| aber | jedoch | dagegen | hingegen | sondern | allerdings /i);\n      // a) harte Zuschreibung: die Teilaussage behauptet eine Nutzung durch die Firma.\n      let zuschreibung = false;\n      for (const teil of teile) {\n        if (!muster.test(teil)) { continue; }\n        if (BK_NEGATIV.test(teil)) { continue; }\n        if (EIGEN.test(teil)) { continue; }\n        if (BEHAUPTUNG.test(teil)) { zuschreibung = true; break; }\n      }\n      if (zuschreibung) { alarm = true; break; }\n      // b) sonst entscheidet der Satzzusammenhang.\n      if (BK_NEGATIV.test(satz)) { continue; }\n      if (EIGEN.test(satz)) { continue; }\n      if (FRAGE.test(satz) || FRAGEND.test(satz.trim())) { continue; }\n      if (bkIstErklaerung(satz, firma)) { continue; }\n      alarm = true;\n      break;\n    }\n    if (alarm) { erfunden.push(name); }\n  }\n\n  // ---- Betriebsformen nicht gleichsetzen.\n  const BETRIEB_ABSOLUT = /(keine|ohne)\\s+cloud|nicht in der cloud|cloud[- ]?frei|voellig ohne cloud/i;\n  const BETRIEB_GLEICH = /(lokal\\w*|self[- ]?hosted|selbst\\s*gehostet)[^.!?]{0,70}(on[- ]?prem\\w*|air[- ]?gap)|(on[- ]?prem\\w*|air[- ]?gap)[^.!?]{0,70}(lokal\\w*|self[- ]?hosted|selbst\\s*gehostet)/i;\n  // Eine Begriffserklaerung ohne Firmenbezug ist keine Aussage ueber DIESE Firma.\n  const betriebTreffer = saetze.filter(function (s) {\n    if (!BETRIEB_ABSOLUT.test(s) && !BETRIEB_GLEICH.test(s)) { return false; }\n    return !bkIstErklaerung(s, firma);\n  });\n  if (betriebTreffer.length) {\n    hinweise.push('Betriebsformen unzulaessig gleichgesetzt oder zu absolut (lokal, On-Prem, Air-Gap, Cloud): '\n      + betriebTreffer.map(function (s) { return s.trim().slice(0, 90); }).join(' | '));\n  }\n\n  // ---- Ein lokal betriebenes Modell ist keine \"eigene KI\".\n  const EIGENE_KI = /\\beigene(s|r|n|m)?\\s+(ki|künstliche intelligenz|kuenstliche intelligenz|sprachmodell|llm)\\b/i;\n  const eigenTreffer = saetze.filter(function (s) { return EIGENE_KI.test(s); });\n  if (eigenTreffer.length) {\n    hinweise.push('Lokales Modell faelschlich als eigene KI bezeichnet: '\n      + eigenTreffer.map(function (s) { return s.trim().slice(0, 90); }).join(' | '));\n  }\n\n  // ---- Aussagen ueber Jeromes moegliche Arbeit.\n  // Ohne belegte Rolle ist jede solche Aussage eine Ableitung. Erlaubt ist sie,\n  // wenn der Satz ein Ableitungskennzeichen traegt - dieselbe Regel, die der\n  // Prompt vorgibt. Verboten bleibt sie ohne Kennzeichen oder in absoluter Form.\n  const rolleBelegt = bkRolleBelegt(belegText);\n  const unmarkiert = saetze.filter(function (s) { return bkTaetigkeitsverstoss(s); });\n  if (unmarkiert.length) {\n    hinweise.push((rolleBelegt ? 'Aussage ueber deine Arbeit ohne Kennzeichen' : 'Nicht gekennzeichnete Ableitung ueber kuenftige Aufgaben, obwohl keine Rolle belegt ist') + ': '\n      + unmarkiert.map(function (s) { return s.trim().slice(0, 90); }).join(' | '));\n  }\n  const absolut = saetze.filter(function (s) { return BK_ABSOLUT.test(s); });\n  if (absolut.length) {\n    hinweise.push('Absolute Wendung ueber deine Arbeit: ' + absolut.map(function (s) { return s.trim().slice(0, 80); }).join(' | '));\n  }\n\n  // Unbelegte Vergleiche und Superlative.\n  const VERGLEICH = /kaum (ein|einem|einen|eine|anderswo|woanders|irgendwo)|nirgends|nirgendwo|einzigartig|einmalig(e|es|er)?\\b|besser als|wie sonst (nirgends|kaum|nirgendwo)|so nicht noch einmal|selten(er)? (zu )?find|in dieser form kaum|unvergleichlich/i;\n  const vTreffer = saetze.filter(function (s) { return VERGLEICH.test(s); });\n  if (vTreffer.length) {\n    hinweise.push('Unbelegter Vergleich oder Superlativ: ' + vTreffer.map(function (s) { return s.trim().slice(0, 80); }).join(' | '));\n  }\n\n  // Aussagen ueber Jeromes Kenntnisstand sind nicht belegt.\n  const KENNTNIS = /\\b(da |dort |hier )?hast du (zwar )?(noch )?(wenig|kaum|keine|gar keine)\\b|kennst du (noch )?nicht|fehlt dir (noch )?(die )?erfahrung|bist du (noch )?nicht/i;\n  const kTreffer = saetze.filter(function (s) { return KENNTNIS.test(s); });\n  if (kTreffer.length) {\n    hinweise.push('Unbelegte Aussage ueber Jeromes Kenntnisstand: ' + kTreffer.map(function (s) { return s.trim().slice(0, 80); }).join(' | '));\n  }\n\n  if (erfunden.length) {\n    hinweise.push('Nicht belegte Begriffe der Firma zugeschrieben: ' + erfunden.join(', '));\n  }\n\n  const kurz = c(d.berater_kurzfazit).slice(0, 200);\n  if (!kurz) hinweise.push('kein Kurzfazit');\n  else if (kurz.toLowerCase().indexOf('http') !== -1) hinweise.push('URL im Kurzfazit');\n\n  // ---- Die Ableitungsfelder muessen gekennzeichnet oder ausdruecklich leer sein.\n  // Geprueft werden nur Saetze, die tatsaechlich eine Taetigkeit behaupten.\n  // Ein offener Punkt (\"Ob remote moeglich ist, bleibt offen.\") oder ein\n  // ausdrueckliches \"Nicht belegt\" braucht kein Kennzeichen.\n  const NICHT_BELEGT = /^nicht belegt\\b/i;\n  for (const feld of ['wahrscheinliche_aufgaben', 'arbeitsalltag']) {\n    const wert = c(d[feld]);\n    if (!wert || NICHT_BELEGT.test(wert)) { continue; }\n    const ohne = bkSaetze(wert).filter(function (s) {\n      if (NICHT_BELEGT.test(s)) { return false; }\n      return bkTaetigkeitsverstoss(s);\n    });\n    if (ohne.length) {\n      hinweise.push('Feld ' + feld + ' ohne Ableitungskennzeichen: ' + ohne.map(function (s) { return s.slice(0, 70); }).join(' | '));\n    }\n  }\n\n  const lern = note(d.lernwert), build = note(d.builder_anteil), zukunft = note(d.zukunftswert);\n  if (lern === null) hinweise.push('lernwert ungueltig');\n  if (build === null) hinweise.push('builder_anteil ungueltig');\n  if (zukunft === null) hinweise.push('zukunftswert ungueltig');\n\n  let empf = c(d.empfehlung).toUpperCase();\n  if (ERLAUBT.indexOf(empf) === -1) { hinweise.push('Empfehlung ungueltig: ' + (empf || 'leer')); empf = ''; }\n\n  const qRoh = Array.isArray(d.quellen) ? d.quellen : [];\n  const geprueft = qRoh.map(x => ({ titel: c(x && x.titel), url: urlNormal(x && x.url) }));\n  const gut = geprueft.filter(x => urlOk(x.url));\n  const kaputt = geprueft.filter(x => !urlOk(x.url));\n  if (!gut.length) hinweise.push('keine brauchbare Quelle');\n  if (kaputt.length) hinweise.push(kaputt.length + ' Quelle(n) mit unbrauchbarer URL verworfen');\n  const quellenText = gut.map(x => (x.titel ? x.titel + ' - ' : '') + x.url).join(' | ').slice(0, 2000);\n\n  const blockierend = !text || lern === null || build === null || zukunft === null || !empf;\n  let status;\n  if (blockierend) status = 'FEHLER';\n  else if (hinweise.length) status = 'UNSICHER';\n  else status = 'FERTIG';\n\n  const zeile = {\n    stellen_id: id,\n    firma,\n    berater_status: status,\n    berater_kurzfazit: kurz,\n    berater_text: text.slice(0, 3000),\n    firma_macht_konkret: c(d.firma_macht_konkret).slice(0, 600),\n    wahrscheinliche_aufgaben: c(d.wahrscheinliche_aufgaben).slice(0, 600),\n    arbeitsalltag: c(d.arbeitsalltag).slice(0, 600),\n    lernwert: lern === null ? '' : lern,\n    builder_anteil: build === null ? '' : build,\n    zukunftswert: zukunft === null ? '' : zukunft,\n    risiken: c(d.risiken).slice(0, 600),\n    empfehlung: empf,\n    quellen: quellenText,\n    berater_wortzahl: anzahl,\n    berater_geprueft_am: jetzt,\n    berater_stil: 'gespraech',\n    chatgpt_json: ''\n  };\n\n  if (status === 'FERTIG') {\n    try {\n      zeile.chatgpt_json = chatgptJson(zeile);\n    } catch (e) {\n      hinweise.push('chatgpt_json nicht erzeugt: ' + e.message);\n      zeile.berater_status = 'UNSICHER';\n      zeile.chatgpt_json = '';\n    }\n  }\n\n  zeile._hinweise = hinweise.join('; ');\n  zeile._quellen_verworfen = kaputt.map(x => x.url).join(' | ');\n  out.push({ json: zeile });\n}\nreturn out;\n"
+      },
+      "id": "27f9c1f7-7938-46ee-a41e-0180291c7468",
+      "name": "Beratung auswerten",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2016,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "DEINE_SHEET_ID"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": "M6_Berater"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "stellen_id": "={{ $json.stellen_id }}",
+            "firma": "={{ $json.firma }}",
+            "berater_status": "={{ $json.berater_status }}",
+            "berater_kurzfazit": "={{ $json.berater_kurzfazit }}",
+            "berater_text": "={{ $json.berater_text }}",
+            "firma_macht_konkret": "={{ $json.firma_macht_konkret }}",
+            "wahrscheinliche_aufgaben": "={{ $json.wahrscheinliche_aufgaben }}",
+            "arbeitsalltag": "={{ $json.arbeitsalltag }}",
+            "lernwert": "={{ $json.lernwert }}",
+            "builder_anteil": "={{ $json.builder_anteil }}",
+            "zukunftswert": "={{ $json.zukunftswert }}",
+            "risiken": "={{ $json.risiken }}",
+            "empfehlung": "={{ $json.empfehlung }}",
+            "quellen": "={{ $json.quellen }}",
+            "berater_wortzahl": "={{ $json.berater_wortzahl }}",
+            "berater_geprueft_am": "={{ $json.berater_geprueft_am }}",
+            "berater_stil": "={{ $json.berater_stil }}",
+            "chatgpt_json": "={{ $json.chatgpt_json }}"
+          },
+          "matchingColumns": [
+            "stellen_id"
+          ],
+          "schema": [
+            {
+              "id": "stellen_id",
+              "displayName": "stellen_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "firma",
+              "displayName": "firma",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "berater_status",
+              "displayName": "berater_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "berater_kurzfazit",
+              "displayName": "berater_kurzfazit",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "berater_text",
+              "displayName": "berater_text",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "firma_macht_konkret",
+              "displayName": "firma_macht_konkret",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "wahrscheinliche_aufgaben",
+              "displayName": "wahrscheinliche_aufgaben",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "arbeitsalltag",
+              "displayName": "arbeitsalltag",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "lernwert",
+              "displayName": "lernwert",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "builder_anteil",
+              "displayName": "builder_anteil",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "zukunftswert",
+              "displayName": "zukunftswert",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "risiken",
+              "displayName": "risiken",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "empfehlung",
+              "displayName": "empfehlung",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "quellen",
+              "displayName": "quellen",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "berater_wortzahl",
+              "displayName": "berater_wortzahl",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "berater_geprueft_am",
+              "displayName": "berater_geprueft_am",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "berater_stil",
+              "displayName": "berater_stil",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "chatgpt_json",
+              "displayName": "chatgpt_json",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "af9fe4b0-d013-4135-ba3a-4de213ba9285",
+      "name": "M6_Berater schreiben",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        2240,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "let b = [];\ntry { b = $('Beratung auswerten').all(); } catch (e) {}\nconst geschrieben = $input.all();\nconst fertig = b.filter(i => i.json.berater_status === 'FERTIG');\nconst unsicher = b.filter(i => i.json.berater_status === 'UNSICHER');\nconst fehler = b.filter(i => i.json.berater_status === 'FEHLER');\n\nreturn [{ json: {\n  workflow: 'M6 - Berater',\n  status: fehler.length ? 'MIT_FEHLERN' : (unsicher.length ? 'MIT_UNSICHEREN' : 'ERFOLGREICH'),\n  verarbeitet: b.length,\n  fertig: fertig.length,\n  unsicher: unsicher.length,\n  fehler: fehler.length,\n  zeilen_geschrieben: geschrieben.length,\n  gpt_aufrufe: b.length,\n  ergebnisse: b.map(i => ({\n    firma: i.json.firma,\n    stellen_id: i.json.stellen_id,\n    wortzahl: i.json.berater_wortzahl,\n    lernwert: i.json.lernwert,\n    builder_anteil: i.json.builder_anteil,\n    zukunftswert: i.json.zukunftswert,\n    empfehlung: i.json.empfehlung,\n    status: i.json.berater_status,\n    hinweise: i.json._hinweise\n  })),\n  ausgefuehrt_am: new Date().toISOString()\n} }];"
+      },
+      "id": "4147528c-c4c4-4531-ac3f-3e551b4dfc4a",
+      "name": "Zusammenfassung",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2464,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prueft ausschliesslich die LAENGE der Erstfassung und baut bei Bedarf\n// genau einen gezielten Korrekturauftrag. Aendert selbst keinen Text und\n// bewertet keine Inhalte - das bleibt vollstaendig bei \"Beratung auswerten\".\n//\n// Lesen der Modellantwort geschieht ueber bkRohtext/bkJsonParse aus dem\n// gemeinsamen Kern. Vorher hatte dieser Knoten eine eigene, schwaechere\n// Fassung: eine Antwort mit echtem Zeilenumbruch im JSON war fuer ihn\n// unlesbar, er meldete dann 0 Woerter und uebersprang die Korrektur\n// stillschweigend. Genau so entstand am 10.08. ein Text mit 390 Woertern.\n\n// ===================== BELEG-KERN v1 =====================\n// Einzige Quelle der Wahrheit fuer Datenreinigung, Belegbasis und Ableitungsregeln.\n// Dieser Block wird von baue.js WOERTLICH in beide Code-Knoten eingesetzt:\n//   \"Kandidaten und Prompt bauen\"  und  \"Beratung auswerten\".\n// Aenderungen ausschliesslich hier vornehmen, danach baue.js laufen lassen.\n// preflight.js prueft, dass beide Knoten denselben Block enthalten.\n\n// Modelle und Tabellen liefern Umlaute teilweise zerlegt (o + U+0308 statt oe).\n// Ohne Normalisierung trifft kein Muster mit Umlaut - \"koenntest\" wird erkannt,\n// \"könntest\" nicht. Deshalb wird JEDER Text zuerst nach NFC zusammengezogen.\nfunction bkNfc(v) {\n  var s = String(v == null ? '' : v);\n  try { return s.normalize('NFC'); } catch (e) { return s; }\n}\n\nfunction bkText(v) {\n  return bkNfc(v).replace(/ /g, ' ').replace(/\\s+/g, ' ').trim();\n}\n\n// ---- Analyse- und Meta-Etiketten -----------------------------------------\n// Diese Etiketten stehen in den M3-Feldern und leiten unsere EIGENE Bewertung\n// oder eine Recherchenotiz ein - keinen Firmenfakt. Ab dem Etikett bis zum Ende\n// des Blocks gehoert der Text nicht mehr in die Firmenfakten.\nvar BK_ANALYSE = [\n  /Passung f(?:ü|ue)r Jerome\\s*:/i,\n  /Umsetzungsn(?:ä|ae)he laut M2\\s*:/i,\n  /laut M2\\s*:/i,\n  /laut M4\\s*:/i,\n  /aus M1KI\\s*:/i,\n  /Gr(?:ö|oe)(?:ß|ss)te Chance\\s*:/i,\n  /Gr(?:ö|oe)(?:ß|ss)tes Risiko\\s*:/i,\n  /Fachlicher Fit\\s*:/i,\n  /Lernchance\\s*:/i,\n  /Lernwert\\s*:/i,\n  /Eignung\\s*:/i,\n  // Bewerberperspektive ohne Namensnennung\n  /Ein(?:e)?\\s+Quereinsteiger\\w*/i,\n  /F(?:ü|ue)r\\s+(?:einen|eine)\\s+(?:Quereinsteiger|Einsteiger|Bewerber)\\w*/i\n];\nvar BK_META = [\n  /manuell verifiziert/i,\n  /\\d+\\s+von\\s+\\d+\\s+gepr(?:ü|ue)ften Firmenseiten/i,\n  /\\d+\\s+Unterseite\\(?n?\\)?\\s+als Catch-all/i,\n  /Quellen\\s*:\\s*https?:/i,\n  /Karriereseite vorhanden\\s*:/i,\n  /laut Datensatz\\s*:/i,\n  /Stand der Recherche\\s*:/i,\n  /Nur informativ/i\n];\n\n// ---- Navigationswortschatz ------------------------------------------------\n// Ein Segment gilt als Menue, wenn es ueberwiegend aus diesen Woertern besteht.\n// Einzelne Treffer schaden nicht - erst der Anteil entscheidet.\nvar BK_NAV_WORT = ('zum inhalt springen skip to content cookie cookies einstellungen startseite start home impressum '\n  + 'datenschutz datenschutzerklaerung agb kontakt kontaktformular menue menu navigation suchen suche login anmelden '\n  + 'leistungen referenzen kompetenzen vorgehen produkt produkte unternehmen team labor karriere blog news presse faq '\n  + 'ueber uber uns de en deutsch english sprache mehr erfahren weiterlesen jetzt hier klicken nach oben seite '\n  + 'anfragen erstberatung vorprojekt beratungsgespraech termin demo angebot prozess prozesse tools services '\n  + 'portfolio loesungen branchen partner downloads newsletter').split(' ');\nvar BK_NAV_SET = {};\nfor (var bkI = 0; bkI < BK_NAV_WORT.length; bkI++) { BK_NAV_SET[BK_NAV_WORT[bkI]] = true; }\n\nvar BK_NAV_PHRASE = /zum inhalt springen|skip to content|cookie[- ]?einstellung|cookie[- ]?hinweis|alle akzeptieren|nach oben scrollen/i;\n\n// ---- Verneinung -----------------------------------------------------------\n// Wirkt ab jetzt NUR noch auf das Segment, in dem sie steht.\nvar BK_NEGATIV = /nicht ersichtlich|nicht bekannt|nicht belegt|nicht nachweisbar|nicht gesichert|nicht dokumentiert|nicht klar|nicht vollst(?:ä|ae)ndig belegt|nichts belegt|nichts bekannt|nichts gesichert|nichts dokumentiert|l(?:ä|ae)sst sich (?:bisher |derzeit |aktuell |so )?nicht sagen|unbekannt|unklar|keine angaben|keine konkreten|keine information|bleibt offen|ist offen|fraglich/i;\n\n// ---- Ableitungskennzeichen ------------------------------------------------\n// Prompt und Pruefer benutzen exakt diese Liste. Ein Satz ueber Jeromes\n// moegliche Arbeit MUSS eines dieser Woerter enthalten.\nvar BK_ABLEITUNG = /\\b(k(?:ö|oe)nnte(?:st|n|t)?|w(?:ü|ue)rde(?:st|n|t)?|w(?:ä|ae)re(?:n|st)?|d(?:ü|ue)rfte(?:st|n)?|m(?:ü|ue)sste(?:st|n)?|h(?:ä|ae)tte(?:st|n)?|wahrscheinlich|vermutlich|m(?:ö|oe)glicherweise|denkbar|naheliegend|voraussichtlich|anzunehmen|vorstellbar|nahe liegen)\\b/i;\n\n// Formulierungen, die auch mit Kennzeichen eine Tatsache behaupten.\nvar BK_ABSOLUT = /\\bdein (?:arbeits)?alltag (?:ist|sieht|besteht)\\b|\\bf(?:ü|ue)r dich sieht der (?:tag|alltag)\\b|\\bdu musst\\b|\\bdu wirst\\b|\\bdu bist dann\\b|\\bdeine aufgabe ist\\b/i;\n\n// Taetigkeitsaussage ueber Jerome.\nvar BK_TAETIGKEIT = /\\b(?:du|dein\\w*)\\b[^.!?]{0,120}\\b(?:arbeitest|arbeiten|baust|bauen|entwickelst|entwickeln|umsetzt|umsetzen|programmierst|programmieren|testest|testen|dokumentierst|dokumentieren|betreust|betreuen|verantwortest|verantworten|einsetzt|einsetzen|anbindest|anbinden|erkennst|weiterentwickelst|lernst|mitarbeitest)\\b/i;\n\n// Belegte Rolle. \"Karriereseite\" ist ausdruecklich KEIN Rollenbeleg -\n// eine vorhandene Karriereseite sagt nichts ueber eine passende offene Stelle.\nvar BK_ROLLE = /stellenausschreibung|stellenangebot|offene stelle|ausgeschriebene stelle|position ausgeschrieben|vakanz|wir suchen (?:ab|zum|einen|eine|dich|verst(?:ä|ae)rkung)|bewirb dich|werkstudent|praktikumsplatz|junior[- ]?(?:entwickler|berater|consultant|developer)/i;\n\n// ---- Segmentierung --------------------------------------------------------\n// Rohfeld -> Bloecke (an \" | \") -> Segmente (an Satzenden und Punktketten).\nfunction bkBloecke(v) {\n  return bkText(v).split(/\\s*\\|\\s*/).map(function (s) { return s.trim(); }).filter(function (s) { return s; });\n}\n\nfunction bkSegmenteAusBlock(block) {\n  return String(block)\n    .split(/(?<=[.!?])\\s+|\\s+·\\s+|\\s+—\\s+|\\s+–\\s+|(?:\\s*\\.\\s*){2,}/)\n    .map(function (s) { return s.replace(/^[\\s.,;:·—–-]+/, '').replace(/[\\s.,;:·—–-]+$/, '').trim(); })\n    .filter(function (s) { return s; });\n}\n\nfunction bkIstNavigation(seg) {\n  var s = String(seg);\n  if (BK_NAV_PHRASE.test(s)) { return true; }\n  var w = s.toLowerCase().replace(/[^a-z0-9äöüß\\s/-]/g, ' ').split(/\\s+/).filter(function (x) { return x; });\n  if (!w.length) { return true; }\n  var nav = 0;\n  for (var i = 0; i < w.length; i++) { if (BK_NAV_SET[w[i]]) { nav++; } }\n  var anteil = nav / w.length;\n  if (anteil >= 0.7) { return true; }\n  if (w.length <= 12 && anteil >= 0.5) { return true; }\n  // Reine Ziffern- oder Zeichenfragmente aus dem Seitenaufbau.\n  if (/^[0-9\\W_]+$/.test(s)) { return true; }\n  return false;\n}\n\n// Kernfunktion. Liefert die drei Anteile eines Rohfeldes getrennt zurueck.\n//   rein    - Firmenfakten, ohne Navigation, ohne Analyse, ohne Meta, ohne Verneinung\n//   analyse - unsere eigene Bewertung (gehoert nach B)\n//   meta    - Recherchenotizen (gehoeren nirgendwohin)\n//   offen   - Segmente mit ausdruecklicher Verneinung (gehoeren nach C)\n//   nav     - verworfene Menuesegmente, nur zur Messung\nfunction bkTrenne(v) {\n  var rein = [], analyse = [], meta = [], offen = [], nav = [];\n  var bloecke = bkBloecke(v);\n  for (var b = 0; b < bloecke.length; b++) {\n    var block = bloecke[b];\n    // Analyse- und Meta-Etikett schneidet den Rest des Blocks ab.\n    var schnitt = -1, artSchnitt = '';\n    for (var a = 0; a < BK_ANALYSE.length; a++) {\n      var m = block.match(BK_ANALYSE[a]);\n      if (m && (schnitt === -1 || m.index < schnitt)) { schnitt = m.index; artSchnitt = 'analyse'; }\n    }\n    for (var t = 0; t < BK_META.length; t++) {\n      var m2 = block.match(BK_META[t]);\n      if (m2 && (schnitt === -1 || m2.index < schnitt)) { schnitt = m2.index; artSchnitt = 'meta'; }\n    }\n    var kopf = block, rest = '';\n    if (schnitt >= 0) { kopf = block.slice(0, schnitt); rest = block.slice(schnitt); }\n    if (rest) { (artSchnitt === 'meta' ? meta : analyse).push(rest.trim()); }\n\n    var segs = bkSegmenteAusBlock(kopf);\n    // Der Schnitt kann einen angefangenen Satz hinterlassen (\"Sitz\" aus\n    // \"Sitz laut Datensatz: Koeln\"). Ein solcher Rest ist kein Firmenfakt.\n    if (schnitt >= 0 && segs.length) {\n      var letzt = segs[segs.length - 1].split(/\\s+/).filter(function (x) { return x; });\n      if (letzt.length <= 2) { segs.pop(); }\n    }\n    for (var s = 0; s < segs.length; s++) {\n      var seg = segs[s];\n      if (bkIstNavigation(seg)) { nav.push(seg); continue; }\n      if (BK_NEGATIV.test(seg)) { offen.push(seg); continue; }\n      rein.push(seg);\n    }\n  }\n  return { rein: bkEindeutig(rein), analyse: bkEindeutig(analyse), meta: bkEindeutig(meta), offen: bkEindeutig(offen), nav: nav };\n}\n\n// Wiederholungen entfernen. Ersetzt die alte Eindeutigkeitsquote.\nfunction bkEindeutig(liste) {\n  var gesehen = {}, out = [];\n  for (var i = 0; i < liste.length; i++) {\n    var k = liste[i].toLowerCase().replace(/[^a-z0-9äöüß]/g, '');\n    if (!k || gesehen[k]) { continue; }\n    gesehen[k] = true;\n    out.push(liste[i]);\n  }\n  return out;\n}\n\n// Gereinigter Fliesstext eines Feldes.\nfunction bkSauber(v) { return bkTrenne(v).rein.join('. '); }\n\n// ---- Feldlisten -----------------------------------------------------------\n// EINE Liste fuer Bereich A und fuer die Belegbasis des Pruefers.\n// Aendert sich hier etwas, aendert es sich fuer beide gleichzeitig.\nvar BK_FIRMENFELDER = [\n  ['Rechtlicher Firmenname', 'm3b_rechtlicher_firmenname', 200],\n  ['Firmenkern', 'm3a_firmenkern', 1600],\n  ['Angebotene Leistungen', 'm3a_angebotene_leistungen', 1200],\n  ['Leistungen laut Website', 'm3b_leistungen', 1600],\n  ['Automatisierungsfokus', 'm3a_automatisierungsfokus', 600],\n  ['Kundennutzen', 'm3a_kundennutzen', 500],\n  ['Umsetzungsbelege', 'm3a_umsetzungsbelege', 400],\n  ['Umsetzungsbelege laut Website', 'm3b_umsetzungsbelege', 400],\n  ['Projekte und Referenzen', 'm3b_projekte_referenzen', 1600],\n  ['Anknuepfungspunkte', 'm3b_anknuepfungspunkte', 400],\n  ['Hinweis zum Team', 'm3b_team_hinweis', 300],\n  ['Technologien laut M3A', 'm3a_technologien', 400],\n  ['Technologien laut Website', 'm3b_technologien', 400]\n];\n\n// Baut Firmenfakten, Belegtext und offene Punkte in einem Durchgang.\n// Prompt und Pruefer rufen ausschliesslich diese Funktion auf.\nfunction bkBelegbasis(a) {\n  var fakten = [], belegTeile = [], offen = [], analyse = [], verworfen = [];\n  var gesehen = {};\n  for (var i = 0; i < BK_FIRMENFELDER.length; i++) {\n    var bez = BK_FIRMENFELDER[i][0], feld = BK_FIRMENFELDER[i][1], limit = BK_FIRMENFELDER[i][2];\n    var teil = bkTrenne(a ? a[feld] : '');\n    for (var x = 0; x < teil.analyse.length; x++) { analyse.push(teil.analyse[x]); }\n    for (var y = 0; y < teil.offen.length; y++) { offen.push(bez + ': ' + teil.offen[y]); }\n    if (teil.nav.length) { verworfen.push(bez + ': ' + teil.nav.length + ' Menuesegment(e)'); }\n    if (!teil.rein.length) { continue; }\n    // Doppelte Segmente ueber Feldgrenzen hinweg nur einmal aufnehmen.\n    var neu = [];\n    for (var z = 0; z < teil.rein.length; z++) {\n      var k = teil.rein[z].toLowerCase().replace(/[^a-z0-9äöüß]/g, '');\n      if (gesehen[k]) { continue; }\n      gesehen[k] = true;\n      neu.push(teil.rein[z]);\n    }\n    if (!neu.length) { continue; }\n    var text = neu.join('. ');\n    if (text.length > limit) { text = text.slice(0, limit) + ' ...'; }\n    fakten.push(bez + ': ' + text);\n    belegTeile.push(text);\n  }\n  return {\n    fakten: fakten,\n    belegText: belegTeile.join(' ').toLowerCase(),\n    offen: bkEindeutig(offen),\n    analyse: bkEindeutig(analyse),\n    verworfen: verworfen\n  };\n}\n\n// Ist eine Rolle bei dieser Firma belegt? Geprueft wird ausschliesslich der\n// gereinigte Belegtext, damit Recherchenotizen nichts ausloesen koennen.\nfunction bkRolleBelegt(belegText) { return BK_ROLLE.test(bkNfc(belegText)); }\n\n// Eine Frage oder ein offener Punkt ist keine Behauptung. \"Ob du remote\n// arbeiten kannst, solltest du nachfragen\" ist kein Verstoss.\nvar BK_FRAGE = /\\bob\\b|\\?|nachfragen|nachhaken|kl(?:ä|ae)ren|offene(?:r|s)? (?:punkt|frage)/i;\n\n// Saetze eines Textes.\nfunction bkSaetze(text) {\n  return bkNfc(text).split(/(?<=[.!?])\\s+/).map(function (s) { return s.trim(); }).filter(function (s) { return s; });\n}\n\n// Eine Aussage ueber Jeromes moegliche Arbeit ist zulaessig, wenn der Satz ein\n// Ableitungskennzeichen traegt und keine absolute Wendung enthaelt.\nfunction bkAbleitungOk(roh) {\n  var satz = bkNfc(roh);\n  if (BK_ABSOLUT.test(satz)) { return false; }\n  return BK_ABLEITUNG.test(satz);\n}\n\n// Nebensaetze wie \"ohne dass du programmieren musst\" beschreiben eine\n// Eigenschaft des Werkzeugs, keine Taetigkeit Jeromes bei dieser Firma.\nvar BK_NEBENSATZ = /\\bohne (?:dass |zu )|\\bstatt dass du\\b|\\bsodass du nicht\\b|\\bdamit du nicht\\b/i;\n\n// Solche Nebensaetze aus dem Satz nehmen, bevor auf Taetigkeit geprueft wird.\nfunction bkOhneNebensaetze(satz) {\n  return String(satz).split(/[,;–—]| aber | jedoch | sondern /i)\n    .filter(function (t) { return !BK_NEBENSATZ.test(t); }).join(' ');\n}\n\n// Verstoss gegen die Ableitungsregel: der Satz behauptet eine Taetigkeit,\n// ist keine Frage und kein offener Punkt - und traegt trotzdem kein Kennzeichen.\n// Prompt-Regel und Prueferregel sind damit dieselbe Regel.\nfunction bkTaetigkeitsverstoss(roh) {\n  var s = bkNfc(roh);\n  if (BK_ABSOLUT.test(s)) { return false; }\n  if (BK_NEGATIV.test(s) || BK_FRAGE.test(s)) { return false; }\n  if (!BK_TAETIGKEIT.test(bkOhneNebensaetze(s))) { return false; }\n  return !BK_ABLEITUNG.test(s);\n}\n\n// ---- Erklaerung ist keine Zuschreibung ------------------------------------\n// \"On-Premise bedeutet, dass die Loesung im Unternehmen laeuft und nicht in der\n// Cloud\" erklaert einen Fachbegriff. Es behauptet nichts ueber DIESE Firma.\n// Sobald sich der Satz auf die Firma bezieht, gilt die Ausnahme nicht mehr.\nvar BK_ERKLAERUNG = /\\bbedeutet\\b|\\bbedeuten\\b|\\bhei(?:ß|ss)t\\b|\\bd\\.h\\.|\\bsprich\\b|\\bgemeint ist\\b|\\bversteht man\\b|\\bnennt man\\b|(?:ä|ae)hnlich|vergleichbar|so wie|wie zum beispiel|zum beispiel|etwa wie|analog zu/i;\nvar BK_FIRMENBEZUG = /\\bhier\\b|\\bdort\\b|\\bbei ihnen\\b|\\bbei denen\\b|\\bin diesem fall\\b|\\bin ihrem fall\\b/i;\n\nfunction bkIstErklaerung(roh, firma) {\n  var s = bkNfc(roh);\n  if (!BK_ERKLAERUNG.test(s)) { return false; }\n  if (BK_FIRMENBEZUG.test(s)) { return false; }\n  var f = bkNfc(firma).trim().toLowerCase();\n  if (f && s.toLowerCase().indexOf(f) !== -1) { return false; }\n  return true;\n}\n\n// ---- JSON aus einer Modellantwort -----------------------------------------\n// Steht in beiden Knoten, die eine Modellantwort lesen (\"Laenge pruefen\" und\n// \"Beratung auswerten\"). Vorher hatte jeder Knoten seine eigene Fassung - der\n// Laengenknoten konnte eine Antwort mit echtem Zeilenumbruch nicht lesen und\n// hat die Laengenkorrektur stillschweigend uebersprungen.\nfunction bkAlleJson(t) {\n  var gefunden = [];\n  var i = 0;\n  while (true) {\n    var a = t.indexOf('{', i);\n    if (a === -1) { break; }\n    var tiefe = 0, imText = false, esc = false, ende = -1;\n    for (var k = a; k < t.length; k++) {\n      var ch = t[k];\n      if (esc) { esc = false; continue; }\n      if (ch === '\\\\') { if (imText) { esc = true; } continue; }\n      if (ch === '\"') { imText = !imText; continue; }\n      if (imText) { continue; }\n      if (ch === '{') { tiefe++; }\n      else if (ch === '}') { tiefe--; if (tiefe === 0) { ende = k; break; } }\n    }\n    if (ende === -1) { break; }\n    gefunden.push(t.slice(a, ende + 1));\n    i = ende + 1;\n  }\n  return gefunden;\n}\n\n// GPT setzt Absaetze als echten Zeilenumbruch mitten in den JSON-String.\n// JSON.parse bricht dann ab. Steuerzeichen INNERHALB von Zeichenketten werden\n// deshalb nachtraeglich escaped. Ausserhalb bleibt alles unveraendert.\nfunction bkSteuerzeichen(roh) {\n  var out = '', imText = false, esc = false;\n  for (var i = 0; i < roh.length; i++) {\n    var ch = roh[i], code = roh.charCodeAt(i);\n    if (esc) { out += ch; esc = false; continue; }\n    if (ch === '\\\\') { out += ch; if (imText) { esc = true; } continue; }\n    if (ch === '\"') { imText = !imText; out += ch; continue; }\n    if (imText && code < 32) {\n      out += (ch === '\\n' ? '\\\\n' : ch === '\\r' ? '\\\\r' : ch === '\\t' ? '\\\\t' : ' ');\n      continue;\n    }\n    out += ch;\n  }\n  return out;\n}\n\n// Liefert das zusammengefuehrte Antwortobjekt oder null.\nfunction bkJsonParse(t) {\n  if (t && typeof t === 'object') { return t; }\n  if (typeof t !== 'string') { return null; }\n  var ziel = {}, etwas = false;\n  var liste = bkAlleJson(t);\n  for (var i = 0; i < liste.length; i++) {\n    var o = null;\n    try { o = JSON.parse(liste[i]); }\n    catch (e) {\n      try { o = JSON.parse(bkSteuerzeichen(liste[i])); } catch (e2) { continue; }\n    }\n    if (!o || typeof o !== 'object' || Array.isArray(o)) { continue; }\n    etwas = true;\n    var keys = Object.keys(o);\n    for (var k = 0; k < keys.length; k++) {\n      var key = keys[k], alt = ziel[key], neu = o[key];\n      var leer = alt === undefined || alt === '' || (Array.isArray(alt) && alt.length === 0);\n      if (leer && neu !== undefined && neu !== '') { ziel[key] = neu; }\n    }\n  }\n  return etwas && ziel.berater_text !== undefined ? ziel : null;\n}\n\n// Rohtext aus einer n8n-OpenAI-Antwort holen. Ebenfalls in beiden Knoten gleich.\nfunction bkRohtext(row) {\n  var g = [];\n  function add(v) {\n    if (v == null || v === '') { return; }\n    if (typeof v === 'string') { var t = v.trim(); if (t) { g.push(t); } return; }\n    if (Array.isArray(v)) { for (var i = 0; i < v.length; i++) { add(v[i]); } return; }\n    if (typeof v !== 'object') { return; }\n    var felder = ['output_text', 'text', 'message', 'response', 'data', 'result', 'content'];\n    for (var f = 0; f < felder.length; f++) { if (v[felder[f]] !== undefined) { add(v[felder[f]]); } }\n    if (Array.isArray(v.output)) { for (var o = 0; o < v.output.length; o++) { add(v.output[o]); } }\n  }\n  var oben = ['output_text', 'output', 'response', 'data', 'result', 'content', 'text'];\n  for (var i = 0; i < oben.length; i++) { add(row && row[oben[i]]); }\n  add(row && row.choices && row.choices[0] && row.choices[0].message && row.choices[0].message.content);\n  if (!g.length) { return null; }\n  for (var k = 0; k < g.length; k++) {\n    if (g[k].indexOf('{') !== -1 && g[k].indexOf('berater_text') !== -1) { return g[k]; }\n  }\n  return g[g.length - 1];\n}\n\n// Wortzahl des Beratertexts einer Modellantwort. EINE Zaehlung fuer alle Knoten.\nfunction bkWortzahl(text) {\n  var t = bkNfc(text).replace(/\\s+/g, ' ').trim();\n  return t ? t.split(' ').filter(function (x) { return x; }).length : 0;\n}\n\nif (typeof module !== 'undefined' && module.exports) {\n  module.exports = {\n    bkNfc: bkNfc, bkText: bkText, bkBloecke: bkBloecke, bkSegmenteAusBlock: bkSegmenteAusBlock,\n    bkIstNavigation: bkIstNavigation, bkTrenne: bkTrenne, bkEindeutig: bkEindeutig,\n    bkSauber: bkSauber, bkBelegbasis: bkBelegbasis, bkRolleBelegt: bkRolleBelegt,\n    bkSaetze: bkSaetze, bkAbleitungOk: bkAbleitungOk, bkTaetigkeitsverstoss: bkTaetigkeitsverstoss,\n    bkIstErklaerung: bkIstErklaerung, bkOhneNebensaetze: bkOhneNebensaetze, bkAlleJson: bkAlleJson, bkSteuerzeichen: bkSteuerzeichen,\n    bkJsonParse: bkJsonParse, bkRohtext: bkRohtext, bkWortzahl: bkWortzahl,\n    BK_FIRMENFELDER: BK_FIRMENFELDER, BK_ABLEITUNG: BK_ABLEITUNG, BK_ABSOLUT: BK_ABSOLUT,\n    BK_TAETIGKEIT: BK_TAETIGKEIT, BK_FRAGE: BK_FRAGE, BK_NEGATIV: BK_NEGATIV, BK_ROLLE: BK_ROLLE,\n    BK_ERKLAERUNG: BK_ERKLAERUNG\n  };\n}\n// =================== ENDE BELEG-KERN v1 ===================\n\nconst MIN = 250, MAX = 350, ZIEL_VON = 270, ZIEL_BIS = 320;\n\nlet basis = [];\ntry { basis = $('Kandidaten und Prompt bauen').all().map(i => i.json || {}); } catch (e) { basis = []; }\n\nconst raus = [];\nfor (const it of $input.all()) {\n  const r = it.json || {};\n  const id = String(r.stellen_id == null ? '' : r.stellen_id).trim();\n  const roh = bkRohtext(r);\n\n  let woerter = 0;\n  let jsonText = '';\n  let lesbar = false;\n  if (roh) {\n    const o = bkJsonParse(roh);\n    if (o) {\n      lesbar = true;\n      woerter = bkWortzahl(o.berater_text);\n      const teile = bkAlleJson(roh);\n      jsonText = teile.length ? teile[teile.length - 1] : roh;\n    }\n  }\n\n  // Nur bei lesbarem Text und tatsaechlicher Laengenabweichung korrigieren.\n  const noetig = lesbar && woerter > 0 && (woerter < MIN || woerter > MAX);\n\n  let prompt = '';\n  if (noetig) {\n    const q = basis.find(x => String(x.stellen_id == null ? '' : x.stellen_id).trim() === id) || {};\n    prompt = [\n      String(q._prompt == null ? '' : q._prompt),\n      '',\n      '=== KORREKTURAUFTRAG ===',\n      'Der folgende Beratertext hat ' + woerter + ' Woerter und liegt damit ausserhalb der erlaubten Spanne von ' + MIN + ' bis ' + MAX + ' Woertern.',\n      'Gezaehlt wird ausschliesslich das Feld berater_text. Das Kurzfazit zaehlt nicht mit.',\n      'Ueberarbeite ausschliesslich die Laenge des vorhandenen Beratertexts auf ' + ZIEL_VON + ' bis ' + ZIEL_BIS + ' Woerter.',\n      'Erhalte Inhalt, Aussagen und Unsicherheiten unveraendert.',\n      'Ergaenze ausschliesslich Informationen, die im oben bereitgestellten Kontext bereits vorhanden sind.',\n      'Keine neuen Tatsachen, keine neuen Ableitungen, keine neuen Technologien, keine neuen Vergleiche.',\n      'Entferne nichts Wesentliches.',\n      'Alle bisherigen Wahrheitsregeln dieses Prompts gelten unveraendert.',\n      'Schreibe den JSON-String in einer Zeile. Verwende fuer Absaetze \\\\n, niemals einen echten Zeilenumbruch innerhalb einer Zeichenkette.',\n      'Antworte erneut AUSSCHLIESSLICH mit dem vollstaendigen JSON im selben Format und mit allen Feldern.',\n      '',\n      'BISHERIGE FASSUNG:',\n      jsonText,\n    ].join('\\n');\n  }\n\n  raus.push({ json: Object.assign({}, r, {\n    _korrektur: noetig,\n    _woerter_erst: woerter,\n    _antwort_lesbar: lesbar,\n    _korrekturprompt: prompt,\n  }) });\n}\nreturn raus;\n"
+      },
+      "id": "2910ecfc-fd5f-4ab3-bd6e-a15f265db62b",
+      "name": "Laenge pruefen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1584,
+        448
+      ],
+      "notes": "Prueft nur die Wortzahl und baut bei Abweichung genau einen Korrekturauftrag."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "218d1913-ea16-4bca-b06d-f07a732aeedd",
+              "leftValue": "={{ $json._korrektur }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "bea09da0-ddc3-4b1d-817f-cfd501526a75",
+      "name": "Laengenkorrektur noetig?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1792,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-5.6-luna",
+          "mode": "id"
+        },
+        "responses": {
+          "values": [
+            {
+              "content": "={{ $json._korrekturprompt }}"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "id": "420c7e08-3293-42fd-a99d-59b5f795709a",
+      "name": "Laenge korrigieren",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.3,
+      "position": [
+        2000,
+        224
+      ],
+      "notes": "Genau ein Korrekturlauf, nur zur Laenge. Keine Websuche."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Setzt die korrigierte Fassung an die Stelle der Erstfassung.\n// Danach laeuft der vollstaendige Pruefer unveraendert darueber.\n// Es wird niemals ein Inhalt durch Code umgeschrieben.\nlet basis = [];\ntry { basis = $('Laenge pruefen').all().map(i => i.json || {}).filter(j => j._korrektur === true); } catch (e) { basis = []; }\n\nconst neu = $input.all();\nif (neu.length !== basis.length) {\n  throw new Error('Korrekturlauf passt nicht zur Anzahl der Kandidaten: ' + neu.length + ' zu ' + basis.length);\n}\n\nconst raus = [];\nfor (let i = 0; i < basis.length; i++) {\n  const b = Object.assign({}, basis[i]);\n  const o = neu[i].json || {};\n  delete b.output;\n  delete b.output_text;\n  b.output = (o.output !== undefined) ? o.output : o;\n  b._korrektur_genutzt = true;\n  raus.push({ json: b });\n}\nreturn raus;"
+      },
+      "id": "083eb5f7-f54e-4df0-99ae-eebe45484c73",
+      "name": "Korrektur einsetzen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2224,
+        224
+      ]
+    },
+    {
+      "id": "c05445c3-2a84-41ac-a27d-e11ed28a5763",
+      "name": "M6 Freigaben laden",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1056,
+        144
+      ],
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "DEINE_SHEET_ID"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": "M6_Freigabe"
+        },
+        "options": {}
+      },
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Manuell starten": {
+      "main": [
+        [
+          {
+            "node": "Tab M6_Berater anlegen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tab M6_Berater anlegen": {
+      "main": [
+        [
+          {
+            "node": "Kopfzeile sicherstellen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Von M5O starten": {
+      "main": [
+        [
+          {
+            "node": "Tab M6_Berater anlegen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Kopfzeile sicherstellen": {
+      "main": [
+        [
+          {
+            "node": "Agentursuche laden",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agentursuche laden": {
+      "main": [
+        [
+          {
+            "node": "Bisherige Beratungen laden",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Bisherige Beratungen laden": {
+      "main": [
+        [
+          {
+            "node": "M6 Freigaben laden",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Kandidaten und Prompt bauen": {
+      "main": [
+        [
+          {
+            "node": "Offene Agenturen vorhanden?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Offene Agenturen vorhanden?": {
+      "main": [
+        [
+          {
+            "node": "Beratung mit GPT-5.6 Luna erstellen",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Agentur und Beratung verbinden",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Zusammenfassung ohne offene Agenturen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agentur und Beratung verbinden": {
+      "main": [
+        [
+          {
+            "node": "Laenge pruefen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Beratung auswerten": {
+      "main": [
+        [
+          {
+            "node": "M6_Berater schreiben",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "M6_Berater schreiben": {
+      "main": [
+        [
+          {
+            "node": "Zusammenfassung",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Laenge pruefen": {
+      "main": [
+        [
+          {
+            "node": "Laengenkorrektur noetig?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Laengenkorrektur noetig?": {
+      "main": [
+        [
+          {
+            "node": "Laenge korrigieren",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Beratung auswerten",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Laenge korrigieren": {
+      "main": [
+        [
+          {
+            "node": "Korrektur einsetzen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Korrektur einsetzen": {
+      "main": [
+        [
+          {
+            "node": "Beratung auswerten",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zusammenfassung": {
+      "main": [
+        []
+      ]
+    },
+    "M6 Freigaben laden": {
+      "main": [
+        [
+          {
+            "node": "Kandidaten und Prompt bauen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Beratung mit GPT-5.6 Luna erstellen": {
+      "main": [
+        [
+          {
+            "node": "Agentur und Beratung verbinden",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false
+}
